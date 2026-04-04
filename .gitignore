@@ -1,0 +1,30 @@
+# Local tool state
+.codex
+
+# Python virtual environments
+venv/
+.venv/
+env/
+
+# Python cache and build artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+
+# Local environment files
+.env
+.env.*
+
+# Project data exports
+data/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
