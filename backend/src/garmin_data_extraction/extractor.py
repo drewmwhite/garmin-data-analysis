@@ -123,7 +123,7 @@ class GarminDataExtractor:
         except ModuleNotFoundError as exc:
             raise ModuleNotFoundError(
                 "pandas is required to load Garmin data into a dataframe. "
-                "Install dependencies with `pip install -r requirements.txt`."
+                "Install dependencies with `pip install -r backend/requirements.txt`."
             ) from exc
 
         dataframe = pd.DataFrame(records)

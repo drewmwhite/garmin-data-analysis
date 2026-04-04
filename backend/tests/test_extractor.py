@@ -4,8 +4,11 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+import sys
 
-from garmin_extractor import GarminDataExtractor
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from garmin_data_extraction import GarminDataExtractor
 
 
 class ParseFileDateRangeTests(unittest.TestCase):

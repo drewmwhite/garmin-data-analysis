@@ -17,6 +17,10 @@ __pycache__/
 dist/
 build/
 *.egg-info/
+backend/.coverage
+backend/.pytest_cache/
+backend/dist/
+backend/build/
 
 # Local environment files
 .env
@@ -24,6 +28,9 @@ build/
 
 # Project data exports
 data/
+
+# Frontend local artifacts
+frontend/.DS_Store
 
 # OS/editor noise
 .DS_Store

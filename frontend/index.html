@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Garmin Data Extraction</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Instrument+Serif:ital@0;1&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles/main.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="site-header">
+        <div>
+          <p class="eyebrow">Garmin Data Platform</p>
+          <a class="brand" href="/">Extraction Console</a>
+        </div>
+        <nav class="site-nav" aria-label="Primary">
+          <a href="#datasets">Datasets</a>
+          <a href="#workspace">Workspace</a>
+          <a href="#roadmap">Roadmap</a>
+        </nav>
+      </header>
+
+      <main>
+        <section class="hero">
+          <div class="hero-copy">
+            <p class="eyebrow">Frontend scaffold</p>
+            <h1>Build the Garmin analytics surface without locking the backend too early.</h1>
+            <p class="hero-text">
+              This static shell is the starting point for a future frontend/backend monorepo:
+              clean sections, room for charts, and a UI model that can later bind to API data.
+            </p>
+            <div class="hero-actions">
+              <a class="button button-primary" href="#workspace">Explore workspace</a>
+              <a class="button button-secondary" href="#datasets">Review datasets</a>
+            </div>
+          </div>
+
+          <aside class="hero-panel" aria-label="Project status">
+            <p class="panel-label">Current snapshot</p>
+            <div id="status-grid" class="status-grid"></div>
+          </aside>
+        </section>
+
+        <section id="datasets" class="section">
+          <div class="section-heading">
+            <p class="eyebrow">Data domains</p>
+            <h2>Backend-ready datasets, frontend-ready surfaces.</h2>
+          </div>
+          <div id="dataset-grid" class="dataset-grid"></div>
+        </section>
+
+        <section id="workspace" class="section workspace">
+          <div>
+            <p class="eyebrow">Workspace</p>
+            <h2>Monorepo responsibilities at a glance.</h2>
+          </div>
+          <div class="workspace-grid">
+            <article class="workspace-card">
+              <span class="workspace-tag">backend/</span>
+              <h3>Extraction library</h3>
+              <p>
+                Python package layout, reusable parsing logic, and a thin root runner for isolated
+                execution.
+              </p>
+            </article>
+            <article class="workspace-card accent-card">
+              <span class="workspace-tag">frontend/</span>
+              <h3>Static product shell</h3>
+              <p>
+                Vanilla HTML, CSS, and JavaScript organized for progressive enhancement when the API
+                arrives.
+              </p>
+            </article>
+            <article class="workspace-card">
+              <span class="workspace-tag">next</span>
+              <h3>Future analytics views</h3>
+              <p>
+                Trends, drill-downs, and personal metrics can attach to stable backend interfaces
+                without a rewrite.
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section id="roadmap" class="section roadmap">
+          <div class="section-heading">
+            <p class="eyebrow">Roadmap</p>
+            <h2>Immediate next steps after the scaffold.</h2>
+          </div>
+          <ol id="roadmap-list" class="roadmap-list"></ol>
+        </section>
+      </main>
+    </div>
+
+    <script src="./scripts/app.js"></script>
+  </body>
+</html>
