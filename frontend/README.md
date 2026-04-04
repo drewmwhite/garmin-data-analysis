@@ -1,16 +1,22 @@
 # Frontend
 
-This workspace is a static vanilla frontend scaffold for the future Garmin analytics experience.
+This workspace is a static vanilla frontend that now fetches live data from the backend FastAPI service.
 
 ## Files
 
 - `index.html`: application shell
 - `styles/main.css`: design system tokens and layout styling
-- `scripts/app.js`: placeholder data and DOM rendering
+- `scripts/app.js`: API fetches, dataset summaries, and preview rendering
 - `assets/`: reserved for future images, icons, or local mock payloads
 
 ## Run locally
 
-Open `frontend/index.html` in a browser, or serve the repository root with a static file server if you want a cleaner local workflow.
+Start the backend API first:
+
+```bash
+PYTHONPATH=backend/src ./venv/bin/uvicorn api:app --reload
+```
+
+Then open `frontend/index.html` in a browser, or serve the repository root with a static file server for a cleaner local workflow.
 
 No framework, bundler, or package manager is required in this pass.

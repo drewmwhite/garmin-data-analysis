@@ -8,7 +8,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from garmin_data_extraction import GarminDataExtractor
+from extraction import GarminDataExtractor
 
 
 class ParseFileDateRangeTests(unittest.TestCase):

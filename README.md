@@ -4,7 +4,6 @@ This repository is now organized as a frontend/backend monorepo:
 
 - `backend/`: Python extraction library, tests, and backend documentation
 - `frontend/`: static vanilla HTML/CSS/JS application shell
-- `main.py`: root runner for executing the Python extraction flow in isolation
 - `requirements.txt`: root convenience dependency entrypoint for the backend workspace
 
 ## Repository layout
@@ -13,14 +12,16 @@ This repository is now organized as a frontend/backend monorepo:
 .
 ├── backend/
 │   ├── docs/
-│   ├── src/garmin_data_extraction/
+│   ├── src/
+│   │   ├── api/
+│   │   ├── extraction/
+│   │   └── services/
 │   └── tests/
 ├── frontend/
 │   ├── assets/
 │   ├── scripts/
 │   └── styles/
 ├── data/
-├── main.py
 ├── requirements.txt
 └── README.md
 ```
@@ -36,7 +37,7 @@ Install backend dependencies into your virtual environment:
 Run the extractor from the root of the repo:
 
 ```bash
-./venv/bin/python main.py
+PYTHONPATH=backend/src ./venv/bin/python -m extraction.runner
 ```
 
 Run backend tests:
@@ -51,5 +52,6 @@ The frontend has no build step. Open `frontend/index.html` directly in a browser
 
 ## Notes
 
-- The repo root is intentionally minimal. Backend imports should target `garmin_data_extraction` from `backend/src/`.
+- The repo root is intentionally minimal. There is no root Python entrypoint.
+- Backend imports should target the top-level `api`, `services`, and `extraction` packages from `backend/src/`.
 - Data exports remain local under `data/` and are still excluded from version control.
