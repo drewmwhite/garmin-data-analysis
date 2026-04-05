@@ -14,7 +14,7 @@ This workspace is a static vanilla frontend that now fetches live data from the 
 Start the backend API first:
 
 ```bash
-PYTHONPATH=backend/src ./venv/bin/uvicorn api:app --reload
+PYTHONPATH=backend/src ./venv/bin/uvicorn api:app --reload --port 8200
 ```
 
 Then open `frontend/index.html` in a browser, or serve the repository root with a static file server for a cleaner local workflow.

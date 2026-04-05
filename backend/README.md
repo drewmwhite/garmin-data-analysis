@@ -43,7 +43,7 @@ PYTHONPATH=backend/src ./venv/bin/python -m extraction.runner
 Start the FastAPI server from the repo root:
 
 ```bash
-PYTHONPATH=backend/src ./venv/bin/uvicorn api:app --reload
+PYTHONPATH=backend/src ./venv/bin/uvicorn api:app --reload --port 8200
 ```
 
 Available endpoints:

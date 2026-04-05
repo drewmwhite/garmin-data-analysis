@@ -1,4 +1,4 @@
-const API_BASE_URL = "http://127.0.0.1:8000/api/v1";
+const API_BASE_URL = "http://127.0.0.1:8200/api/v1";
 const projectSnapshot = {
   roadmap: [
     "Add filtering and date-range controls on top of the dataset endpoints.",
@@ -132,7 +132,7 @@ async function loadDatasets() {
       <strong>API unavailable</strong>
       <p>
         Start the FastAPI server with
-        <code>PYTHONPATH=backend/src ./venv/bin/uvicorn api:app --reload</code>
+        <code>PYTHONPATH=backend/src ./venv/bin/uvicorn api:app --reload --port 8200</code>
         and refresh this page.
       </p>
     `;
