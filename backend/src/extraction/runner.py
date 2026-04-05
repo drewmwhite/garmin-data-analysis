@@ -1,15 +1,19 @@
 from __future__ import annotations
 
-from extraction import GarminDataExtractor
+from extraction import (
+    DEFAULT_ACTIVITY_VO2_MAX_DATA_DIR,
+    DEFAULT_HYDRATION_DATA_DIR,
+    GarminDataExtractor,
+)
 
 
 def run_isolated_extraction() -> None:
     datasets = (
         ("sleep", GarminDataExtractor(), "load_sleep_data"),
-        ("hydration", GarminDataExtractor(data_dir="data/hydration"), "load_hydration_data"),
+        ("hydration", GarminDataExtractor(data_dir=DEFAULT_HYDRATION_DATA_DIR), "load_hydration_data"),
         (
             "activity VO2 max",
-            GarminDataExtractor(data_dir="data/activity_vo2_max"),
+            GarminDataExtractor(data_dir=DEFAULT_ACTIVITY_VO2_MAX_DATA_DIR),
             "load_activity_vo2_max_data",
         ),
     )

@@ -9,12 +9,14 @@ if TYPE_CHECKING:
     import pandas as pd
 
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+DATA_ROOT = REPO_ROOT / "data"
 SLEEP_DATA_GLOB = "*_sleepData.json"
-DEFAULT_SLEEP_DATA_DIR = Path("data/sleep")
+DEFAULT_SLEEP_DATA_DIR = DATA_ROOT / "sleep"
 HYDRATION_DATA_GLOB = "HydrationLogFile_*.json"
-DEFAULT_HYDRATION_DATA_DIR = Path("data/hydration")
+DEFAULT_HYDRATION_DATA_DIR = DATA_ROOT / "hydration"
 ACTIVITY_VO2_MAX_DATA_GLOB = "ActivityVo2Max_*.json"
-DEFAULT_ACTIVITY_VO2_MAX_DATA_DIR = Path("data/activity_vo2_max")
+DEFAULT_ACTIVITY_VO2_MAX_DATA_DIR = DATA_ROOT / "activity_vo2_max"
 SLEEP_TIMESTAMP_COLUMNS = (
     "sleepStartTimestampGMT",
     "sleepEndTimestampGMT",

@@ -11,6 +11,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from extraction import GarminDataExtractor
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
 class ParseFileDateRangeTests(unittest.TestCase):
     def test_parse_sleep_filename_dates(self) -> None:
         start_date, end_date = GarminDataExtractor._parse_file_date_range(
@@ -42,7 +45,7 @@ class ActivityVo2MaxExtractionTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls._temp_dir = tempfile.TemporaryDirectory()
         cls.data_dir = Path(cls._temp_dir.name)
-        source_dir = Path("data/activity_vo2_max")
+        source_dir = REPO_ROOT / "data" / "activity_vo2_max"
 
         for source_file in source_dir.glob("ActivityVo2Max_*.json"):
             shutil.copy2(source_file, cls.data_dir / source_file.name)
