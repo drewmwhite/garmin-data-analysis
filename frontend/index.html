@@ -7,105 +7,109 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Instrument+Serif:ital@0;1&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="./styles/main.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
   </head>
   <body>
-    <div class="page-shell">
-      <header class="site-header">
-        <div>
-          <p class="eyebrow">Garmin Data Platform</p>
-          <a class="brand" href="/">Extraction Console</a>
-        </div>
-        <nav class="site-nav" aria-label="Primary">
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="brand" href="/">Garmin Data</a>
+        <nav class="site-nav">
           <a href="#datasets">Datasets</a>
-          <a href="#workspace">Workspace</a>
-          <a href="#roadmap">Roadmap</a>
+          <a href="#preview">Preview</a>
+          <a href="#activities">Activities</a>
         </nav>
-      </header>
+      </div>
+    </header>
 
-      <main>
-        <section class="hero">
-          <div class="hero-copy">
-            <p class="eyebrow">Frontend scaffold</p>
-            <h1>Build the Garmin analytics surface without locking the backend too early.</h1>
-            <p class="hero-text">
-              This static shell is the starting point for a future frontend/backend monorepo:
-              clean sections, room for charts, and a UI model that can later bind to API data.
-            </p>
-            <div class="hero-actions">
-              <a class="button button-primary" href="#workspace">Explore workspace</a>
-              <a class="button button-secondary" href="#datasets">Review datasets</a>
+    <main>
+      <section class="hero">
+        <p class="hero-label">Personal fitness analytics</p>
+        <h1>Your Garmin data,<br />made accessible.</h1>
+        <p class="hero-sub">
+          A clean REST API over your raw Garmin exports. Browse datasets,
+          inspect records, and build on top of structured fitness data.
+        </p>
+        <a class="btn btn-primary" href="#datasets">Browse datasets</a>
+      </section>
+
+      <section id="datasets" class="section">
+        <div class="section-header">
+          <h2>Datasets</h2>
+          <span id="api-status" class="status-badge">Connecting…</span>
+        </div>
+        <div id="dataset-grid" class="dataset-grid"></div>
+      </section>
+
+      <section id="preview" class="section">
+        <div class="section-header">
+          <h2>Live preview</h2>
+          <p class="section-sub">Latest records from the API</p>
+        </div>
+        <div id="preview-list" class="preview-list"></div>
+      </section>
+    </main>
+
+      <section id="activities" class="section">
+        <div class="section-header">
+          <h2>Activities</h2>
+          <p class="section-sub">Most recent FIT file</p>
+        </div>
+
+        <div class="filter-bar">
+          <select id="filter-sport" title="Filter by sport" aria-label="Filter by sport">
+            <option value="">All sports</option>
+            <option value="running">Running</option>
+            <option value="cycling">Cycling</option>
+            <option value="swimming">Swimming</option>
+            <option value="walking">Walking</option>
+            <option value="hiking">Hiking</option>
+            <option value="generic">Generic</option>
+          </select>
+          <input type="date" id="filter-date-from" aria-label="From date" />
+          <input type="date" id="filter-date-to" aria-label="To date" />
+          <button type="button" class="btn btn-primary" id="load-activities-btn">Load activities</button>
+        </div>
+
+        <div id="activities-table-wrap">
+          <p class="load-prompt">Press <strong>Load activities</strong> to fetch data from the API.</p>
+        </div>
+
+        <div class="pagination hidden" id="pagination">
+          <button type="button" class="btn btn-secondary" id="page-prev">&#8592; Prev</button>
+          <span id="page-info"></span>
+          <button type="button" class="btn btn-secondary" id="page-next">Next &#8594;</button>
+        </div>
+
+        <div class="detail-panel hidden" id="detail-panel">
+          <div class="detail-header">
+            <button type="button" class="btn btn-secondary" id="detail-close">&#8592; Back</button>
+            <h3 id="detail-title"></h3>
+          </div>
+          <div class="stat-chips" id="stat-chips"></div>
+          <div class="charts-grid">
+            <div class="chart-container">
+              <p class="chart-label">Heart Rate (bpm)</p>
+              <canvas id="chart-hr"></canvas>
+            </div>
+            <div class="chart-container">
+              <p class="chart-label">Speed (m/s)</p>
+              <canvas id="chart-speed"></canvas>
+            </div>
+            <div class="chart-container">
+              <p class="chart-label">Cadence (rpm)</p>
+              <canvas id="chart-cadence"></canvas>
+            </div>
+            <div class="chart-container">
+              <p class="chart-label">Altitude (m)</p>
+              <canvas id="chart-altitude"></canvas>
             </div>
           </div>
-
-          <aside class="hero-panel" aria-label="Project status">
-            <p class="panel-label">Current snapshot</p>
-            <div id="status-grid" class="status-grid"></div>
-          </aside>
-        </section>
-
-        <section id="datasets" class="section">
-          <div class="section-heading">
-            <p class="eyebrow">Data domains</p>
-            <h2>Backend-ready datasets, frontend-ready surfaces.</h2>
-          </div>
-          <p id="api-banner" class="api-banner">Connecting to API...</p>
-          <div id="dataset-grid" class="dataset-grid"></div>
-        </section>
-
-        <section class="section">
-          <div class="section-heading">
-            <p class="eyebrow">Live preview</p>
-            <h2>FastAPI-backed dataset samples.</h2>
-          </div>
-          <div id="preview-grid" class="preview-grid"></div>
-        </section>
-
-        <section id="workspace" class="section workspace">
-          <div>
-            <p class="eyebrow">Workspace</p>
-            <h2>Monorepo responsibilities at a glance.</h2>
-          </div>
-          <div class="workspace-grid">
-            <article class="workspace-card">
-              <span class="workspace-tag">backend/</span>
-              <h3>Extraction library</h3>
-              <p>
-                Python package layout, reusable parsing logic, and a thin root runner for isolated
-                execution.
-              </p>
-            </article>
-            <article class="workspace-card accent-card">
-              <span class="workspace-tag">frontend/</span>
-              <h3>Live REST client</h3>
-              <p>
-                Vanilla HTML, CSS, and JavaScript fetching real dataset summaries and previews from
-                FastAPI.
-              </p>
-            </article>
-            <article class="workspace-card">
-              <span class="workspace-tag">next</span>
-              <h3>Future analytics views</h3>
-              <p>
-                Trends, drill-downs, and personal metrics can attach to stable backend interfaces
-                without a rewrite.
-              </p>
-            </article>
-          </div>
-        </section>
-
-        <section id="roadmap" class="section roadmap">
-          <div class="section-heading">
-            <p class="eyebrow">Roadmap</p>
-            <h2>Immediate next steps after the scaffold.</h2>
-          </div>
-          <ol id="roadmap-list" class="roadmap-list"></ol>
-        </section>
-      </main>
-    </div>
+        </div>
+      </section>
 
     <script src="./scripts/app.js"></script>
   </body>

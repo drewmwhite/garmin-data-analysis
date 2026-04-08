@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -83,6 +84,79 @@ def get_dataset_records(dataset_slug: str) -> list[dict[str, Any]]:
     extractor = config.extractor_class(data_dir=config.data_dir)
     extract_method = getattr(extractor, config.extract_method_name)
     return extract_method(**config.extract_kwargs)
+
+
+_FIT_CACHE: dict[str, Any] = {"sessions": None, "records": None, "ts": 0.0}
+_FIT_CACHE_TTL = 300  # seconds
+_FIT_MAX_FILES = 1  # most recent FIT files to parse on demand
+
+
+def _load_fit_cache() -> None:
+    """Populate the in-memory FIT cache if stale or empty."""
+    if time.time() - _FIT_CACHE["ts"] < _FIT_CACHE_TTL:
+        return
+    extractor = GarminFitExtractor(data_dir=DEFAULT_ACTIVITY_FIT_DATA_DIR)
+    _FIT_CACHE["sessions"] = extractor.extract_activity_session_records(
+        max_files=_FIT_MAX_FILES, most_recent=True
+    )
+    _FIT_CACHE["records"] = extractor.extract_activity_record_records(
+        max_files=_FIT_MAX_FILES, most_recent=True
+    )
+    _FIT_CACHE["ts"] = time.time()
+
+
+def get_activity_sessions(
+    sport: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    sort_by: str = "start_time",
+    sort_dir: str = "desc",
+    limit: int = 50,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """Return filtered, sorted, and paginated activity session records."""
+    _load_fit_cache()
+    sessions: list[dict[str, Any]] = [
+        s for s in (_FIT_CACHE["sessions"] or []) if "_parse_error" not in s
+    ]
+
+    if sport:
+        sessions = [s for s in sessions if str(s.get("sport", "")).lower() == sport.lower()]
+
+    if date_from:
+        sessions = [s for s in sessions if _ts_str(s.get("start_time")) >= date_from]
+
+    if date_to:
+        sessions = [s for s in sessions if _ts_str(s.get("start_time")) <= date_to]
+
+    reverse = sort_dir.lower() == "desc"
+    sessions = sorted(sessions, key=lambda s: (s.get(sort_by) is None, s.get(sort_by)), reverse=reverse)
+
+    total = len(sessions)
+    page = sessions[offset : offset + limit]
+    return {"total": total, "returned": len(page), "sessions": page}
+
+
+def get_activity_records(activity_id: str) -> list[dict[str, Any]]:
+    """Return time-series records for a single activity from the cache."""
+    _load_fit_cache()
+    return [r for r in (_FIT_CACHE["records"] or []) if r.get("activity_id") == activity_id]
+
+
+def get_activity_session(activity_id: str) -> dict[str, Any] | None:
+    """Return the session record for a single activity from the cache."""
+    _load_fit_cache()
+    for s in (_FIT_CACHE["sessions"] or []):
+        if s.get("activity_id") == activity_id:
+            return s
+    return None
+
+
+def _ts_str(value: Any) -> str:
+    """Convert a timestamp value to an ISO-format date string for range comparisons."""
+    if value is None:
+        return ""
+    return str(value)[:10]
 
 
 def build_dataset_summary(dataset_slug: str, records: list[dict[str, Any]]) -> dict[str, Any]:

@@ -120,12 +120,16 @@ class GarminFitExtractor:
             ) from exc
         return fsspec.url_to_fs(self.data_dir)
 
-    def _list_fit_files(self, max_files: int | None = None) -> list[str]:
+    def _list_fit_files(
+        self, max_files: int | None = None, most_recent: bool = False
+    ) -> list[str]:
         """Return sorted list of .fit file paths under ``self.data_dir``.
 
         Args:
             max_files: Hard cap on the number of files returned. Useful for
                 testing — limits total I/O regardless of file type.
+            most_recent: When True, return the last ``max_files`` files
+                (highest sort order = newest activity IDs) rather than the first.
         """
         fs, root_path = self._get_filesystem()
         pattern = f"{root_path.rstrip('/')}/*.fit"
@@ -135,7 +139,7 @@ class GarminFitExtractor:
                 f"No .fit files found in {self.data_dir!r}."
             )
         if max_files is not None:
-            files = files[:max_files]
+            files = files[-max_files:] if most_recent else files[:max_files]
         return files
 
     def _read_fit_bytes(self, path: str) -> bytes:
@@ -270,6 +274,7 @@ class GarminFitExtractor:
         self,
         activity_limit: int | None = None,
         max_files: int | None = None,
+        most_recent: bool = False,
     ) -> list[dict[str, Any]]:
         """Return one record per activity .fit file with session-level summary stats.
 
@@ -278,10 +283,11 @@ class GarminFitExtractor:
                 and other non-activity files don't count toward the limit.
             max_files: Hard cap on total files read (including non-activity files).
                 Useful for fast test runs — set to a small number like 50.
+            most_recent: When True, read the last ``max_files`` files (newest first).
         """
         results: list[dict[str, Any]] = []
         activities_found = 0
-        for path in self._list_fit_files(max_files=max_files):
+        for path in self._list_fit_files(max_files=max_files, most_recent=most_recent):
             if activity_limit is not None and activities_found >= activity_limit:
                 break
             try:
@@ -300,6 +306,7 @@ class GarminFitExtractor:
         self,
         activity_limit: int | None = None,
         max_files: int | None = None,
+        most_recent: bool = False,
     ) -> list[dict[str, Any]]:
         """Return one row per data point (≈1 Hz) across activity .fit files.
 
@@ -310,10 +317,11 @@ class GarminFitExtractor:
                 produce tens of millions of rows.
             max_files: Hard cap on total files read (including non-activity files).
                 Useful for fast test runs — set to a small number like 50.
+            most_recent: When True, read the last ``max_files`` files (newest first).
         """
         results: list[dict[str, Any]] = []
         activities_found = 0
-        for path in self._list_fit_files(max_files=max_files):
+        for path in self._list_fit_files(max_files=max_files, most_recent=most_recent):
             if activity_limit is not None and activities_found >= activity_limit:
                 break
             try:
