@@ -9,6 +9,8 @@ description = "Backend extraction library for Garmin wellness exports."
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115,<1",
+    "fitparse>=1.2",
+    "fsspec>=2024.1",
     "pandas>=2.2,<3",
     "uvicorn>=0.30,<1",
 ]

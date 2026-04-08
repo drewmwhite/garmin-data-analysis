@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +10,10 @@ from extraction.extractor import (
     DEFAULT_SLEEP_DATA_DIR,
     GarminDataExtractor,
 )
+from extraction.fit_extractor import (
+    DEFAULT_ACTIVITY_FIT_DATA_DIR,
+    GarminFitExtractor,
+)
 
 
 @dataclass(frozen=True)
@@ -17,8 +21,10 @@ class DatasetConfig:
     slug: str
     title: str
     description: str
-    data_dir: Path
+    data_dir: str | Path
     extract_method_name: str
+    extractor_class: type = field(default=GarminDataExtractor)
+    extract_kwargs: dict = field(default_factory=dict)
 
 
 DATASET_CONFIGS: dict[str, DatasetConfig] = {
@@ -43,6 +49,24 @@ DATASET_CONFIGS: dict[str, DatasetConfig] = {
         data_dir=DEFAULT_ACTIVITY_VO2_MAX_DATA_DIR,
         extract_method_name="extract_activity_vo2_max_records",
     ),
+    "activity-sessions": DatasetConfig(
+        slug="activity-sessions",
+        title="Activity Sessions",
+        description="Per-activity session summaries parsed from .fit files (sport, distance, HR, pace, etc.).",
+        data_dir=DEFAULT_ACTIVITY_FIT_DATA_DIR,
+        extract_method_name="extract_activity_session_records",
+        extractor_class=GarminFitExtractor,
+        extract_kwargs={"activity_limit": 500},
+    ),
+    "activity-records": DatasetConfig(
+        slug="activity-records",
+        title="Activity Records",
+        description="Time-series data points (~1 Hz) from .fit activity files (HR, speed, GPS, cadence, etc.).",
+        data_dir=DEFAULT_ACTIVITY_FIT_DATA_DIR,
+        extract_method_name="extract_activity_record_records",
+        extractor_class=GarminFitExtractor,
+        extract_kwargs={"activity_limit": 50},
+    ),
 }
 
 
@@ -56,9 +80,9 @@ def get_dataset_config(dataset_slug: str) -> DatasetConfig:
 
 def get_dataset_records(dataset_slug: str) -> list[dict[str, Any]]:
     config = get_dataset_config(dataset_slug)
-    extractor = GarminDataExtractor(data_dir=config.data_dir)
+    extractor = config.extractor_class(data_dir=config.data_dir)
     extract_method = getattr(extractor, config.extract_method_name)
-    return extract_method()
+    return extract_method(**config.extract_kwargs)
 
 
 def build_dataset_summary(dataset_slug: str, records: list[dict[str, Any]]) -> dict[str, Any]:
