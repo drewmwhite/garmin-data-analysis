@@ -33,14 +33,21 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import sys
 from pathlib import Path
 
 import duckdb
 import pandas as pd
+from dotenv import load_dotenv
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# Load .env from the repo root so credentials are available without
+# manually exporting them in the shell first.
+load_dotenv(REPO_ROOT / ".env")
 DB_PATH = REPO_ROOT / "garmin.duckdb"
+STAGING_DB_PATH = REPO_ROOT / "garmin_staging.duckdb"
 
 sys.path.insert(0, str(REPO_ROOT / "backend" / "src"))
 
@@ -55,6 +62,7 @@ from extraction.fit_extractor import (  # noqa: E402
     GarminFitExtractor,
     DEFAULT_ACTIVITY_FIT_DATA_DIR,
 )
+from extraction.strava_extractor import StravaExtractor  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +70,7 @@ from extraction.fit_extractor import (  # noqa: E402
 # ---------------------------------------------------------------------------
 
 def open_db() -> duckdb.DuckDBPyConnection:
-    return duckdb.connect(str(DB_PATH))
+    return duckdb.connect(str(STAGING_DB_PATH))
 
 
 def configure_s3(conn: duckdb.DuckDBPyConnection) -> None:
@@ -332,6 +340,189 @@ def build_activity_records(
         )
 
 
+def build_strava(
+    conn: duckdb.DuckDBPyConnection, limit: int | None = None, s3_base: str | None = None
+) -> None:
+    """Fetch activities and laps from the Strava API and store them in DuckDB.
+
+    Requires STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, and STRAVA_REFRESH_TOKEN
+    environment variables. Skipped silently if credentials are missing.
+
+    Laps are inserted in batches as they are fetched so that progress is
+    preserved even if the run is interrupted or the daily rate limit is hit.
+    Re-running will skip activities already present in strava_laps.
+    """
+    missing = [
+        v for v in ("STRAVA_CLIENT_ID", "STRAVA_CLIENT_SECRET", "STRAVA_REFRESH_TOKEN")
+        if not os.environ.get(v)
+    ]
+    if missing:
+        print(f"  Skipping Strava — missing env vars: {', '.join(missing)}")
+        return
+
+    print("Building strava_activities + strava_laps (fetching from Strava API)...")
+    extractor = StravaExtractor()
+
+    # --- Activities ---
+    activities = extractor.fetch_activities()
+    if limit:
+        activities = activities[:limit]
+
+    if not activities:
+        print("  No activities returned.")
+        return
+
+    activities_df = _clean_df(pd.DataFrame(activities))
+    _drop_and_create(conn, "strava_activities", activities_df)
+    if s3_base:
+        s3_upload(
+            conn, "strava_activities", s3_base,
+            "SELECT *, year(CAST(start_date_local AS TIMESTAMP)) AS year FROM strava_activities",
+            ["year"],
+        )
+
+    # --- Laps (incremental, batch insert) ---
+    run_ids = [a["id"] for a in activities if (a.get("type") or "").lower() == "run"]
+
+    # Resume support: skip IDs already in the table.
+    existing_tables = {
+        row[0]
+        for row in conn.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
+        ).fetchall()
+    }
+    if "strava_laps" in existing_tables:
+        done_ids = {
+            row[0]
+            for row in conn.execute("SELECT DISTINCT workout_id FROM strava_laps").fetchall()
+        }
+        remaining = [rid for rid in run_ids if rid not in done_ids]
+        if done_ids:
+            print(f"  Resuming: {len(done_ids)} activities already have laps, {len(remaining)} remaining.")
+    else:
+        remaining = run_ids
+
+    if not remaining:
+        print("  strava_laps already up to date.")
+        return
+
+    print(f"  Fetching laps for {len(remaining)} run activities (batch insert as we go)...")
+    table_created = "strava_laps" in existing_tables
+    total_laps = 0
+
+    for batch_laps, batch_ids in extractor.iter_laps_batched(remaining):
+        if not batch_laps:
+            continue
+        laps_df = _clean_df(pd.DataFrame(batch_laps))
+        if not table_created:
+            conn.execute("CREATE TABLE strava_laps AS SELECT * FROM laps_df")
+            table_created = True
+        else:
+            conn.execute("INSERT INTO strava_laps SELECT * FROM laps_df")
+        total_laps += len(laps_df)
+        print(f"  Saved {len(laps_df)} laps ({total_laps} total so far)...")
+
+    print(f"  strava_laps: {total_laps} rows written")
+    if s3_base and total_laps:
+        s3_upload(conn, "strava_laps", s3_base, "SELECT * FROM strava_laps", [])
+
+
+def build_unified_activities_view(conn: duckdb.DuckDBPyConnection) -> None:
+    """Create a unified_activities view combining Garmin FIT sessions and Strava activities.
+
+    Both sources are normalized to a common set of columns with a data_source
+    discriminator ('garmin' or 'strava').
+    """
+    print("Building unified_activities view...")
+
+    # Check which source tables exist
+    existing = {
+        row[0]
+        for row in conn.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
+        ).fetchall()
+    }
+
+    parts: list[str] = []
+
+    if "activity_sessions" in existing:
+        parts.append("""
+        SELECT
+            CAST(activity_id AS VARCHAR)    AS activity_id,
+            'garmin'                        AS data_source,
+            CAST(NULL AS VARCHAR)           AS name,
+            LOWER(sport)                    AS sport,
+            start_time,
+            total_distance                  AS total_distance_m,
+            total_timer_time                AS moving_time_s,
+            total_elapsed_time              AS elapsed_time_s,
+            total_ascent                    AS total_elevation_gain_m,
+            avg_heart_rate,
+            max_heart_rate,
+            avg_speed                       AS avg_speed_ms,
+            max_speed                       AS max_speed_ms,
+            total_calories,
+            avg_cadence
+        FROM activity_sessions
+        """)
+
+    if "strava_activities" in existing:
+        parts.append("""
+        SELECT
+            CAST(id AS VARCHAR)             AS activity_id,
+            'strava'                        AS data_source,
+            name,
+            LOWER(type)                     AS sport,
+            CAST(start_date_local AS TIMESTAMP) AS start_time,
+            distance                        AS total_distance_m,
+            CAST(moving_time AS DOUBLE)     AS moving_time_s,
+            CAST(elapsed_time AS DOUBLE)    AS elapsed_time_s,
+            total_elevation_gain            AS total_elevation_gain_m,
+            average_heartrate               AS avg_heart_rate,
+            max_heartrate                   AS max_heart_rate,
+            average_speed                   AS avg_speed_ms,
+            max_speed                       AS max_speed_ms,
+            CAST(NULL AS DOUBLE)            AS total_calories,
+            CAST(NULL AS DOUBLE)            AS avg_cadence
+        FROM strava_activities
+        """)
+
+    if not parts:
+        print("  No source tables found — skipping unified_activities view.")
+        return
+
+    combined_sql = "\nUNION ALL\n".join(parts)
+
+    # Deduplicate: same calendar day + same sport + same duration bucket (5-min)
+    # → keep the Strava row when both sources have the same activity.
+    # This handles the gap where Garmin export stops but Strava continues,
+    # while also preventing double-counting when both sources cover the same workout.
+    dedup_view_sql = f"""
+    CREATE VIEW unified_activities AS
+    WITH _combined AS (
+        {combined_sql}
+    )
+    SELECT * FROM _combined
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY
+            CAST(start_time AS DATE),
+            LOWER(COALESCE(sport, 'unknown')),
+            ROUND(COALESCE(moving_time_s, 0) / 300)
+        ORDER BY
+            CASE data_source WHEN 'strava' THEN 0 ELSE 1 END
+    ) = 1
+    """
+
+    conn.execute("DROP VIEW IF EXISTS unified_activities")
+    conn.execute(dedup_view_sql)
+    rows = conn.execute(
+        "SELECT data_source, COUNT(*) FROM unified_activities GROUP BY data_source ORDER BY data_source"
+    ).fetchall()
+    total = sum(r[1] for r in rows)
+    breakdown = ", ".join(f"{r[0]}: {r[1]:,}" for r in rows)
+    print(f"  unified_activities view: {total:,} deduplicated rows ({breakdown})")
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -343,6 +534,8 @@ ALL_TABLES = [
     "daily-summaries",
     "activity-sessions",
     "activity-records",
+    "strava",
+    "view",
 ]
 
 
@@ -379,9 +572,19 @@ def main() -> None:
         s3_base = f"s3://{args.bucket}/{args.prefix.strip('/')}"
 
     print(f"Database: {DB_PATH}")
+    print(f"Staging:  {STAGING_DB_PATH}")
     if s3_base:
         print(f"S3 upload: {s3_base}")
     print()
+
+    # Copy the existing DB into staging so partial builds (--table X) keep
+    # all other tables.  The web app keeps reading the original file the
+    # whole time; it is only replaced atomically at the very end.
+    if DB_PATH.exists():
+        print(f"Copying {DB_PATH.name} → {STAGING_DB_PATH.name} …")
+        shutil.copy2(DB_PATH, STAGING_DB_PATH)
+    else:
+        STAGING_DB_PATH.unlink(missing_ok=True)
 
     conn = open_db()
     if s3_base:
@@ -396,15 +599,30 @@ def main() -> None:
         "daily-summaries":    lambda: build_daily_summaries(conn, limit=args.limit, s3_base=s3_base),
         "activity-sessions":  lambda: build_activity_sessions(conn, limit=args.limit, s3_base=s3_base),
         "activity-records":   lambda: build_activity_records(conn, limit=args.limit, s3_base=s3_base),
+        "strava":             lambda: build_strava(conn, limit=args.limit, s3_base=s3_base),
+        "view":               lambda: None,  # no-op — view is always rebuilt below
     }
 
-    for table in tables:
-        print()
-        builders[table]()
+    try:
+        for table in tables:
+            print()
+            builders[table]()
 
-    conn.close()
-    size_mb = DB_PATH.stat().st_size / 1_048_576
-    print(f"\nDone. garmin.duckdb is {size_mb:.1f} MB")
+        print()
+        build_unified_activities_view(conn)
+
+        conn.close()
+
+        # Atomically replace the live DB with the newly built staging file.
+        # os.replace is atomic on POSIX — the web app never sees a partial file.
+        os.replace(STAGING_DB_PATH, DB_PATH)
+        size_mb = DB_PATH.stat().st_size / 1_048_576
+        print(f"\nDone. garmin.duckdb is {size_mb:.1f} MB")
+
+    except Exception:
+        conn.close()
+        STAGING_DB_PATH.unlink(missing_ok=True)
+        raise
 
 
 if __name__ == "__main__":

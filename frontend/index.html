@@ -21,6 +21,8 @@
           <a href="#datasets">Datasets</a>
           <a href="#dashboard">Dashboard</a>
           <a href="#activities">Activities</a>
+          <a href="#calendar">Calendar</a>
+          <a href="#strava">Strava</a>
         </nav>
       </div>
     </header>
@@ -166,6 +168,64 @@
             </div>
           </div>
         </div>
+      </section>
+
+      <!-- ── Activity Calendar ────────────────────────────────────────────── -->
+      <section id="calendar" class="section">
+        <div class="section-header">
+          <h2>Activity Calendar</h2>
+          <div class="calendar-controls">
+            <select id="calendar-year-select" class="calendar-year-select" title="Select year" aria-label="Select year"></select>
+            <select id="calendar-sport-select" class="calendar-year-select" title="Filter by sport" aria-label="Filter by sport">
+              <option value="">All sports</option>
+            </select>
+          </div>
+        </div>
+        <div id="calendar-container" class="calendar-container">
+          <p class="load-prompt">Loading…</p>
+        </div>
+        <div id="calendar-popup" class="calendar-popup hidden">
+          <div class="calendar-popup-header">
+            <span id="calendar-popup-date" class="calendar-popup-date"></span>
+            <button type="button" id="calendar-popup-close" class="calendar-popup-close" aria-label="Close">&#x2715;</button>
+          </div>
+          <div id="calendar-popup-activities"></div>
+        </div>
+      </section>
+
+      <!-- ── Strava ──────────────────────────────────────────────────────── -->
+      <section id="strava" class="section">
+
+        <!-- View 1: month index -->
+        <div id="strava-view-months">
+          <div class="section-header">
+            <h2>Strava</h2>
+            <p class="section-sub">Browse by month</p>
+          </div>
+          <div id="strava-month-grid" class="strava-month-grid">
+            <p class="load-prompt">Loading…</p>
+          </div>
+        </div>
+
+        <!-- View 2: activities for a selected month -->
+        <div id="strava-view-activities" class="hidden">
+          <div class="section-header">
+            <button type="button" class="btn btn-secondary" id="strava-back-months">&#8592; All months</button>
+            <h2 id="strava-month-title"></h2>
+          </div>
+          <div id="strava-activity-list"></div>
+        </div>
+
+        <!-- View 3: laps for a selected activity -->
+        <div id="strava-view-laps" class="hidden">
+          <div class="section-header">
+            <button type="button" class="btn btn-secondary" id="strava-back-activities">&#8592; Back</button>
+            <h2 id="strava-activity-title"></h2>
+          </div>
+          <div class="stat-chips" id="strava-activity-chips"></div>
+          <div id="strava-laps-wrap"></div>
+        </div>
+
       </section>
 
     <script src="./scripts/app.js"></script>

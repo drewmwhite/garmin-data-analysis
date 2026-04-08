@@ -584,6 +584,286 @@ body {
   background: var(--bg-subtle);
 }
 
+/* ── Strava ── */
+
+.strava-month-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 0.875rem;
+}
+
+.strava-month-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.1rem 1.25rem;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.strava-month-card:hover {
+  border-color: #fc4c02;
+  box-shadow: 0 0 0 3px #fc4c0218;
+}
+
+.strava-month-label {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.strava-month-count {
+  font-size: 0.8rem;
+  color: #fc4c02;
+  font-weight: 600;
+}
+
+.strava-month-stats {
+  display: flex;
+  gap: 0.75rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  padding-top: 0.3rem;
+  border-top: 1px solid var(--border);
+  margin-top: 0.15rem;
+}
+
+.strava-activities-table .strava-activity-name-cell {
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.strava-activity-row {
+  cursor: pointer;
+}
+
+.strava-activity-row:hover td {
+  background: var(--bg-subtle);
+}
+
+/* ── Activity Calendar ── */
+
+:root {
+  --cal-0: #ebedf0;
+  --cal-1: #bfdbfe;
+  --cal-2: #60a5fa;
+  --cal-3: #2563eb;
+  --cal-4: #1d4ed8;
+  --cal-cell-size: 13px;
+  --cal-gap: 3px;
+}
+
+.calendar-controls {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.calendar-year-select {
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.calendar-container {
+  overflow-x: auto;
+  padding-bottom: 0.5rem;
+}
+
+.cal-month-row {
+  display: grid;
+  grid-template-columns: repeat(var(--cal-cols), calc(var(--cal-cell-size) + var(--cal-gap)));
+  margin-left: calc(2.2rem + var(--cal-gap));
+  margin-bottom: 4px;
+}
+
+.cal-month-row span {
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.cal-body {
+  display: flex;
+  gap: var(--cal-gap);
+  align-items: flex-start;
+}
+
+.cal-day-labels {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cal-gap);
+  width: 2.2rem;
+  flex-shrink: 0;
+}
+
+.cal-day-labels span {
+  height: var(--cal-cell-size);
+  font-size: 0.68rem;
+  color: var(--muted);
+  line-height: var(--cal-cell-size);
+  text-align: right;
+  padding-right: 4px;
+}
+
+.cal-grid {
+  display: grid;
+  grid-template-rows: repeat(7, var(--cal-cell-size));
+  grid-template-columns: repeat(var(--cal-cols), var(--cal-cell-size));
+  grid-auto-flow: column;
+  gap: var(--cal-gap);
+}
+
+.cal-cell {
+  width: var(--cal-cell-size);
+  height: var(--cal-cell-size);
+  border-radius: 2px;
+  border: none;
+  padding: 0;
+  cursor: default;
+  transition: opacity 0.1s, outline 0.1s;
+}
+
+.cal-cell--0 { background: var(--cal-0); }
+.cal-cell--1 { background: var(--cal-1); cursor: pointer; }
+.cal-cell--2 { background: var(--cal-2); cursor: pointer; }
+.cal-cell--3 { background: var(--cal-3); cursor: pointer; }
+.cal-cell--4 { background: var(--cal-4); cursor: pointer; }
+
+.cal-cell--outside {
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+.cal-cell:not(.cal-cell--0):not(.cal-cell--outside):hover {
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
+}
+
+.cal-legend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 0.75rem;
+  margin-left: calc(2.2rem + var(--cal-gap));
+}
+
+.cal-legend-label {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.cal-legend-cell {
+  width: var(--cal-cell-size);
+  height: var(--cal-cell-size);
+  border-radius: 2px;
+  display: inline-block;
+}
+
+/* ── Calendar popup ── */
+
+.calendar-popup {
+  position: absolute;
+  z-index: 100;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  padding: 0.9rem 1rem;
+  min-width: 220px;
+  max-width: 300px;
+}
+
+#calendar { position: relative; }
+
+.calendar-popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.6rem;
+}
+
+.calendar-popup-date {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.calendar-popup-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+  color: var(--muted);
+  padding: 0 0.2rem;
+  line-height: 1;
+}
+.calendar-popup-close:hover { color: var(--text); }
+
+.cal-popup-activity {
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--border);
+}
+
+.cal-popup-activity:first-child { border-top: none; padding-top: 0; }
+
+.cal-popup-activity-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.2rem;
+}
+
+.cal-popup-sport {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+}
+
+.cal-popup-source {
+  font-size: 0.68rem;
+  color: var(--muted);
+  text-transform: capitalize;
+}
+
+.cal-popup-name {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text);
+  margin-bottom: 0.25rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cal-popup-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.75rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.cal-popup-loading,
+.cal-popup-empty {
+  font-size: 0.82rem;
+  color: var(--muted);
+  margin: 0;
+}
+
 /* ── Responsive ── */
 
 @media (max-width: 768px) {

@@ -50,29 +50,73 @@ DATASET_META: dict[str, dict[str, str]] = {
         "title": "Activity Sessions",
         "description": "Per-activity session summaries from .fit files.",
     },
+    "strava_activities": {
+        "slug": "strava-activities",
+        "title": "Strava Activities",
+        "description": "Activity summaries fetched from the Strava API.",
+    },
+    "strava_laps": {
+        "slug": "strava-laps",
+        "title": "Strava Laps",
+        "description": "Lap-level detail for Strava run activities.",
+    },
 }
 
 
 # ---------------------------------------------------------------------------
-# Connection — module-level singleton with thread-safe reconnect
+# Connection — one read-only connection per thread
+#
+# DuckDB connections are not thread-safe.  FastAPI runs sync endpoints in a
+# thread pool, so sharing one connection across threads causes crashes.
+# threading.local() gives each worker thread its own connection.  Multiple
+# read-only connections to the same file are supported by DuckDB.
+#
+# When db/build.py atomically replaces garmin.duckdb the file mtime changes.
+# Each thread detects this on its next request and reconnects to the new file.
 # ---------------------------------------------------------------------------
 
-_conn: duckdb.DuckDBPyConnection | None = None
-_conn_lock = threading.Lock()
+_local = threading.local()   # per-thread state: .conn, .mtime
+_mtime_lock = threading.Lock()
+_latest_mtime: float = 0.0   # last known mtime, updated by any thread
 
 
 def _get_conn() -> duckdb.DuckDBPyConnection:
-    global _conn
-    with _conn_lock:
-        if _conn is not None:
-            return _conn
-        if not DB_PATH.exists():
-            raise RuntimeError(
-                f"garmin.duckdb not found at {DB_PATH}. "
-                "Run `python db/build.py` to build the database first."
-            )
-        _conn = duckdb.connect(str(DB_PATH), read_only=True)
-        return _conn
+    """Return this thread's read-only DuckDB connection.
+
+    Opens a new connection on first use and reconnects automatically when the
+    database file is replaced by a fresh build.
+    """
+    global _latest_mtime
+
+    if not DB_PATH.exists():
+        raise RuntimeError(
+            f"garmin.duckdb not found at {DB_PATH}. "
+            "Run `python db/build.py` to build the database first."
+        )
+
+    file_mtime = DB_PATH.stat().st_mtime
+
+    # Broadcast a file change so all threads know to reconnect.
+    with _mtime_lock:
+        if file_mtime != _latest_mtime:
+            _latest_mtime = file_mtime
+
+    thread_conn: duckdb.DuckDBPyConnection | None = getattr(_local, "conn", None)
+    thread_mtime: float = getattr(_local, "mtime", 0.0)
+
+    if thread_conn is not None and thread_mtime == file_mtime:
+        return thread_conn
+
+    # First connect or file was replaced — open a fresh connection for this thread.
+    if thread_conn is not None:
+        try:
+            thread_conn.close()
+        except Exception:
+            pass
+
+    _local.conn = duckdb.connect(str(DB_PATH), read_only=True)
+    _local.mtime = file_mtime
+    return _local.conn
 
 
 def _rows_to_dicts(sql: str, params: list | None = None) -> list[dict[str, Any]]:
@@ -85,7 +129,8 @@ def _rows_to_dicts(sql: str, params: list | None = None) -> list[dict[str, Any]]
 
 def _scalar(sql: str, params: list | None = None) -> Any:
     conn = _get_conn()
-    return conn.execute(sql, params or []).fetchone()[0]
+    row = conn.execute(sql, params or []).fetchone()
+    return row[0] if row is not None else None
 
 
 # ---------------------------------------------------------------------------
@@ -99,6 +144,8 @@ def list_datasets() -> list[dict[str, Any]]:
     for table, meta in DATASET_META.items():
         try:
             count = _scalar(f"SELECT COUNT(*) FROM {table}")
+            if count is None:
+                continue
             columns = _rows_to_dicts(f"DESCRIBE {table}")
             col_names = [c["column_name"] for c in columns]
             results.append({
@@ -107,8 +154,8 @@ def list_datasets() -> list[dict[str, Any]]:
                 "column_count": len(col_names),
                 "sample_columns": col_names[:6],
             })
-        except duckdb.CatalogException:
-            pass  # table not yet built
+        except Exception:
+            pass  # table not yet built or view references missing table
     return results
 
 
@@ -463,3 +510,188 @@ def get_activity_records(activity_id: str) -> list[dict[str, Any]]:
         "SELECT * FROM activity_records WHERE activity_id = ? ORDER BY timestamp",
         [activity_id],
     )
+
+
+# ---------------------------------------------------------------------------
+# Strava
+# ---------------------------------------------------------------------------
+
+def get_activity_calendar(year: int, sport: str | None = None) -> list[dict[str, Any]]:
+    """Return one row per active day in the given year across all sources."""
+    where = "WHERE start_time IS NOT NULL AND year(CAST(start_time AS DATE)) = ?"
+    params: list[Any] = [int(year)]
+    if sport:
+        where += " AND LOWER(sport) = LOWER(?)"
+        params.append(sport)
+    return _rows_to_dicts(
+        f"""
+        SELECT
+            CAST(start_time AS DATE)                AS date,
+            COUNT(*)                                AS activity_count,
+            STRING_AGG(DISTINCT LOWER(sport), ', ') AS sports
+        FROM unified_activities
+        {where}
+        GROUP BY CAST(start_time AS DATE)
+        ORDER BY date
+        """,
+        params,
+    )
+
+
+def get_activity_calendar_years() -> list[int]:
+    """Return distinct years that have activity data, newest first."""
+    rows = _rows_to_dicts(
+        """
+        SELECT DISTINCT year(CAST(start_time AS DATE)) AS year
+        FROM unified_activities
+        WHERE start_time IS NOT NULL
+        ORDER BY year DESC
+        """
+    )
+    return [r["year"] for r in rows]
+
+
+def get_activity_calendar_sports() -> list[str]:
+    """Return distinct sport types across all activity data, sorted."""
+    rows = _rows_to_dicts(
+        """
+        SELECT DISTINCT LOWER(sport) AS sport
+        FROM unified_activities
+        WHERE sport IS NOT NULL
+        ORDER BY sport
+        """
+    )
+    return [r["sport"] for r in rows]
+
+
+def get_activities_for_date(date: str) -> list[dict[str, Any]]:
+    """Return all activities on a given date (YYYY-MM-DD)."""
+    return _rows_to_dicts(
+        """
+        SELECT
+            activity_id, data_source, name, sport,
+            start_time, total_distance_m, moving_time_s, avg_heart_rate
+        FROM unified_activities
+        WHERE CAST(start_time AS DATE) = CAST(? AS DATE)
+        ORDER BY start_time
+        """,
+        [date],
+    )
+
+
+def get_strava_months() -> list[dict[str, Any]]:
+    """Return one row per calendar month that has Strava activities."""
+    return _rows_to_dicts(
+        """
+        SELECT
+            year(CAST(start_date_local AS TIMESTAMP))  AS year,
+            month(CAST(start_date_local AS TIMESTAMP)) AS month,
+            COUNT(*)                                   AS activity_count,
+            ROUND(SUM(distance) / 1609.344, 1)         AS total_distance_mi,
+            SUM(moving_time)                           AS total_moving_time_s
+        FROM strava_activities
+        GROUP BY year, month
+        ORDER BY year DESC, month DESC
+        """
+    )
+
+
+def get_strava_activities(
+    sport: str | None = None,
+    year: int | None = None,
+    month: int | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict[str, Any]:
+    where_clauses: list[str] = []
+    params: list[Any] = []
+
+    if sport:
+        where_clauses.append("LOWER(type) = LOWER(?)")
+        params.append(sport)
+    if year:
+        where_clauses.append("year(CAST(start_date_local AS TIMESTAMP)) = ?")
+        params.append(int(year))
+    if month:
+        where_clauses.append("month(CAST(start_date_local AS TIMESTAMP)) = ?")
+        params.append(int(month))
+    if date_from:
+        where_clauses.append("CAST(start_date_local AS DATE) >= CAST(? AS DATE)")
+        params.append(date_from)
+    if date_to:
+        where_clauses.append("CAST(start_date_local AS DATE) <= CAST(? AS DATE)")
+        params.append(date_to)
+
+    where = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+
+    total = _scalar(f"SELECT COUNT(*) FROM strava_activities {where}", params)
+    activities = _rows_to_dicts(
+        f"SELECT * FROM strava_activities {where} ORDER BY start_date_local DESC"
+        f" LIMIT {int(limit)} OFFSET {int(offset)}",
+        params,
+    )
+    return {"total": total, "returned": len(activities), "activities": activities}
+
+
+def get_strava_laps(activity_id: int | str) -> list[dict[str, Any]]:
+    return _rows_to_dicts(
+        "SELECT * FROM strava_laps WHERE workout_id = ? ORDER BY lap_index",
+        [int(activity_id)],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Unified activities (Garmin + Strava)
+# ---------------------------------------------------------------------------
+
+_UNIFIED_SORT_COLUMNS = {
+    "start_time", "total_distance_m", "moving_time_s",
+    "avg_heart_rate", "avg_speed_ms", "total_elevation_gain_m",
+}
+
+
+def get_unified_activities(
+    sport: str | None = None,
+    data_source: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    sort_by: str = "start_time",
+    sort_dir: str = "desc",
+    limit: int = 50,
+    offset: int = 0,
+) -> dict[str, Any]:
+    if sort_by not in _UNIFIED_SORT_COLUMNS:
+        sort_by = "start_time"
+    sort_dir = "DESC" if sort_dir.lower() == "desc" else "ASC"
+
+    where_clauses: list[str] = []
+    params: list[Any] = []
+
+    if sport:
+        where_clauses.append("LOWER(sport) = LOWER(?)")
+        params.append(sport)
+    if data_source:
+        where_clauses.append("data_source = ?")
+        params.append(data_source.lower())
+    if date_from:
+        where_clauses.append("CAST(start_time AS DATE) >= CAST(? AS DATE)")
+        params.append(date_from)
+    if date_to:
+        where_clauses.append("CAST(start_time AS DATE) <= CAST(? AS DATE)")
+        params.append(date_to)
+
+    where = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+
+    total = _scalar(f"SELECT COUNT(*) FROM unified_activities {where}", params)
+    activities = _rows_to_dicts(
+        f"""
+        SELECT * FROM unified_activities
+        {where}
+        ORDER BY {sort_by} {sort_dir} NULLS LAST
+        LIMIT {int(limit)} OFFSET {int(offset)}
+        """,
+        params,
+    )
+    return {"total": total, "returned": len(activities), "activities": activities}

@@ -4,5 +4,6 @@ fitparse>=1.2
 fsspec>=2024.1
 pandas>=2.2,<3
 pyarrow>=14
+python-dotenv>=1.0
 s3fs>=2024.1
 uvicorn>=0.30,<1

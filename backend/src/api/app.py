@@ -6,6 +6,10 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from services.duckdb_service import (
+    get_activities_for_date,
+    get_activity_calendar,
+    get_activity_calendar_sports,
+    get_activity_calendar_years,
     get_activity_records,
     get_activity_session,
     get_activity_sessions,
@@ -17,7 +21,11 @@ from services.duckdb_service import (
     get_hydration,
     get_sleep,
     get_sleep_weekly_stats,
+    get_strava_activities,
+    get_strava_laps,
+    get_strava_months,
     get_stress,
+    get_unified_activities,
     get_vo2_max,
     get_vo2_max_trends,
     list_datasets,
@@ -26,7 +34,7 @@ from services.duckdb_service import (
 
 app = FastAPI(
     title="Garmin Data Extraction API",
-    version="0.3.0",
+    version="0.4.0",
     description="REST API for Garmin health and activity data, powered by DuckDB.",
 )
 
@@ -174,6 +182,31 @@ def analytics_vo2max_trends() -> dict[str, Any]:
     return {"data": get_vo2_max_trends()}
 
 
+@app.get("/api/v1/analytics/activity-calendar")
+def analytics_activity_calendar(
+    year: int = Query(default=2024, ge=2000, le=2100),
+    sport: str | None = Query(default=None),
+) -> dict[str, Any]:
+    return {"year": year, "days": get_activity_calendar(year, sport=sport)}
+
+
+@app.get("/api/v1/analytics/activity-calendar/years")
+def analytics_activity_calendar_years() -> dict[str, Any]:
+    return {"years": get_activity_calendar_years()}
+
+
+@app.get("/api/v1/analytics/activity-calendar/sports")
+def analytics_activity_calendar_sports() -> dict[str, Any]:
+    return {"sports": get_activity_calendar_sports()}
+
+
+@app.get("/api/v1/analytics/activities-for-date")
+def analytics_activities_for_date(
+    date: str = Query(description="Date in YYYY-MM-DD format"),
+) -> dict[str, Any]:
+    return {"date": date, "activities": get_activities_for_date(date)}
+
+
 @app.get("/api/v1/analytics/activities/summary")
 def analytics_activity_summary() -> dict[str, Any]:
     return {"data": get_activity_sport_summary()}
@@ -216,3 +249,66 @@ def get_activity(activity_id: str) -> dict[str, Any]:
 def get_activity_timeseries(activity_id: str) -> dict[str, Any]:
     records = get_activity_records(activity_id)
     return {"activity_id": activity_id, "record_count": len(records), "records": records}
+
+
+# ---------------------------------------------------------------------------
+# Strava
+# ---------------------------------------------------------------------------
+
+@app.get("/api/v1/strava/months")
+def list_strava_months() -> dict[str, Any]:
+    return {"months": get_strava_months()}
+
+
+@app.get("/api/v1/strava/activities")
+def list_strava_activities(
+    sport: str | None = Query(default=None),
+    year: int | None = Query(default=None, ge=2000, le=2100),
+    month: int | None = Query(default=None, ge=1, le=12),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    return get_strava_activities(
+        sport=sport,
+        year=year,
+        month=month,
+        date_from=date_from,
+        date_to=date_to,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@app.get("/api/v1/strava/activities/{activity_id}/laps")
+def list_strava_laps(activity_id: int) -> dict[str, Any]:
+    laps = get_strava_laps(activity_id)
+    return {"activity_id": activity_id, "lap_count": len(laps), "laps": laps}
+
+
+# ---------------------------------------------------------------------------
+# Unified activities (Garmin + Strava)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/v1/activities/unified")
+def list_unified_activities(
+    sport: str | None = Query(default=None),
+    data_source: str | None = Query(default=None, pattern="^(garmin|strava)$"),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    sort_by: str = Query(default="start_time"),
+    sort_dir: str = Query(default="desc", pattern="^(asc|desc)$"),
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    return get_unified_activities(
+        sport=sport,
+        data_source=data_source,
+        date_from=date_from,
+        date_to=date_to,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+        limit=limit,
+        offset=offset,
+    )

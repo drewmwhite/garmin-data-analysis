@@ -279,8 +279,8 @@ async function loadDashboard() {
           (r) => `<tr>
             <td>${r.sport ?? "—"}</td>
             <td>${r.total_activities}</td>
-            <td>${r.total_distance_km != null ? r.total_distance_km + " km" : "—"}</td>
-            <td>${r.avg_distance_km != null ? r.avg_distance_km + " km" : "—"}</td>
+            <td>${r.total_distance_km != null ? (r.total_distance_km * 0.621371).toFixed(1) + " mi" : "—"}</td>
+            <td>${r.avg_distance_km != null ? (r.avg_distance_km * 0.621371).toFixed(2) + " mi" : "—"}</td>
             <td>${r.avg_heart_rate != null ? r.avg_heart_rate + " bpm" : "—"}</td>
             <td>${r.avg_duration_min != null ? r.avg_duration_min + " min" : "—"}</td>
             <td>${r.total_calories != null ? r.total_calories.toLocaleString() + " kcal" : "—"}</td>
@@ -339,7 +339,7 @@ const detailClose = document.querySelector("#detail-close");
 
 function fmtDistance(m) {
   if (m == null) return "—";
-  return (m / 1000).toFixed(2) + " km";
+  return (m / 1609.344).toFixed(2) + " mi";
 }
 
 function fmtDuration(s) {
@@ -368,7 +368,7 @@ function fmtTime(ts) {
 
 function fmtSpeed(ms) {
   if (ms == null) return "—";
-  return (ms * 3.6).toFixed(1) + " km/h";
+  return (ms * 2.23694).toFixed(1) + " mph";
 }
 
 function capitalize(str) {
@@ -613,3 +613,427 @@ function renderActivityCharts(records) {
 
 detailClose.addEventListener("click", closeDetail);
 loadBtn.addEventListener("click", () => { actState.page = 0; loadActivities(); });
+
+// ── Strava ────────────────────────────────────────────────────────────────────
+
+const stravaViewMonths     = document.querySelector("#strava-view-months");
+const stravaViewActivities = document.querySelector("#strava-view-activities");
+const stravaViewLaps       = document.querySelector("#strava-view-laps");
+const stravaMonthGrid      = document.querySelector("#strava-month-grid");
+const stravaActivityList   = document.querySelector("#strava-activity-list");
+const stravaMonthTitle     = document.querySelector("#strava-month-title");
+const stravaActivityTitle  = document.querySelector("#strava-activity-title");
+const stravaActivityChips  = document.querySelector("#strava-activity-chips");
+const stravaLapsWrap       = document.querySelector("#strava-laps-wrap");
+const stravaBackMonths     = document.querySelector("#strava-back-months");
+const stravaBackActivities = document.querySelector("#strava-back-activities");
+
+const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+// Strava nav state so the back buttons know where to return
+let stravaCurrentYear  = null;
+let stravaCurrentMonth = null;
+
+function fmtPace(avgSpeedMs) {
+  if (!avgSpeedMs || avgSpeedMs === 0) return "—";
+  const minPerMi = 1609.344 / (avgSpeedMs * 60);
+  const mins = Math.floor(minPerMi);
+  const secs = Math.round((minPerMi - mins) * 60);
+  return `${mins}:${secs.toString().padStart(2, "0")} /mi`;
+}
+
+function showStravaView(view) {
+  stravaViewMonths.classList.add("hidden");
+  stravaViewActivities.classList.add("hidden");
+  stravaViewLaps.classList.add("hidden");
+  view.classList.remove("hidden");
+  view.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+// ── View 1: month index ──────────────────────────────────────────────────────
+
+async function loadStravaMonths() {
+  try {
+    const { months } = await fetchJson("/strava/months");
+
+    if (!months || months.length === 0) {
+      stravaMonthGrid.innerHTML = `<p class="load-prompt">No Strava data found. Run <code>python db/build.py --table strava</code> to import.</p>`;
+      return;
+    }
+
+    stravaMonthGrid.innerHTML = "";
+    months.forEach((m) => {
+      const label = `${MONTH_NAMES[m.month - 1]} ${m.year}`;
+      const card = document.createElement("article");
+      card.className = "strava-month-card";
+      card.innerHTML = `
+        <span class="strava-month-label">${label}</span>
+        <span class="strava-month-count">${m.activity_count} ${m.activity_count === 1 ? "activity" : "activities"}</span>
+        <div class="strava-month-stats">
+          <span>${m.total_distance_mi != null ? m.total_distance_mi + " mi" : "—"}</span>
+          <span>${fmtDuration(m.total_moving_time_s)}</span>
+        </div>
+      `;
+      card.addEventListener("click", () => loadStravaActivitiesForMonth(m.year, m.month, label));
+      stravaMonthGrid.appendChild(card);
+    });
+  } catch {
+    stravaMonthGrid.innerHTML = `<p class="load-prompt error-text">Could not load Strava months. Is the API running?</p>`;
+  }
+}
+
+// ── View 2: activities for a month ───────────────────────────────────────────
+
+async function loadStravaActivitiesForMonth(year, month, label) {
+  stravaCurrentYear  = year;
+  stravaCurrentMonth = month;
+  stravaMonthTitle.textContent = label;
+  stravaActivityList.innerHTML = `<p class="load-prompt">Loading…</p>`;
+  showStravaView(stravaViewActivities);
+
+  try {
+    const { activities } = await fetchJson(`/strava/activities?year=${year}&month=${month}&limit=200`);
+
+    if (!activities || activities.length === 0) {
+      stravaActivityList.innerHTML = `<p class="load-prompt">No activities for ${label}.</p>`;
+      return;
+    }
+
+    const rows = activities.map((a) => {
+      const isRun = (a.type || "").toLowerCase() === "run";
+      const pace  = isRun ? fmtPace(a.average_speed) : fmtSpeed(a.average_speed);
+      const date  = a.start_date_local
+        ? new Date(a.start_date_local).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })
+        : "—";
+      return `
+        <tr class="strava-activity-row" data-id="${a.id}" data-name="${(a.name || "Untitled").replace(/"/g, "&quot;")}">
+          <td>${date}</td>
+          <td class="strava-activity-name-cell">${a.name || "Untitled"}</td>
+          <td>${capitalize(a.type || "")}</td>
+          <td>${fmtDistance(a.distance)}</td>
+          <td>${fmtDuration(a.moving_time)}</td>
+          <td>${pace}</td>
+          <td>${a.average_heartrate != null ? a.average_heartrate + " bpm" : "—"}</td>
+          <td>${a.total_elevation_gain != null ? a.total_elevation_gain + " m" : "—"}</td>
+        </tr>`;
+    }).join("");
+
+    stravaActivityList.innerHTML = `
+      <div class="preview-table-wrap">
+        <table class="preview-table strava-activities-table">
+          <thead>
+            <tr>
+              <th>Date</th><th>Name</th><th>Type</th><th>Distance</th>
+              <th>Duration</th><th>Pace / Speed</th><th>Avg HR</th><th>Elevation</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+
+    stravaActivityList.querySelectorAll(".strava-activity-row").forEach((row) => {
+      row.addEventListener("click", () =>
+        loadStravaLaps(parseInt(row.dataset.id), row.dataset.name, activities.find((a) => a.id == row.dataset.id))
+      );
+    });
+  } catch {
+    stravaActivityList.innerHTML = `<p class="load-prompt error-text">Failed to load activities.</p>`;
+  }
+}
+
+// ── View 3: laps for an activity ─────────────────────────────────────────────
+
+async function loadStravaLaps(activityId, activityName, activity) {
+  stravaActivityTitle.textContent = activityName;
+  stravaActivityChips.innerHTML   = "";
+  stravaLapsWrap.innerHTML        = `<p class="load-prompt">Loading splits…</p>`;
+  showStravaView(stravaViewLaps);
+
+  // Summary chips from the activity row
+  if (activity) {
+    const isRun = (activity.type || "").toLowerCase() === "run";
+    const chips = [
+      ["Date",     activity.start_date_local ? new Date(activity.start_date_local).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "—"],
+      ["Distance", fmtDistance(activity.distance)],
+      ["Duration", fmtDuration(activity.moving_time)],
+      [isRun ? "Pace" : "Speed", isRun ? fmtPace(activity.average_speed) : fmtSpeed(activity.average_speed)],
+      ["Avg HR",   activity.average_heartrate != null ? activity.average_heartrate + " bpm" : "—"],
+      ["Max HR",   activity.max_heartrate     != null ? activity.max_heartrate     + " bpm" : "—"],
+      ["Elevation",activity.total_elevation_gain != null ? activity.total_elevation_gain + " m" : "—"],
+    ];
+    stravaActivityChips.innerHTML = chips
+      .map(([l, v]) => `<div class="stat-chip"><span class="stat-chip-label">${l}</span><span class="stat-chip-val">${v}</span></div>`)
+      .join("");
+  }
+
+  try {
+    const { laps } = await fetchJson(`/strava/activities/${activityId}/laps`);
+
+    if (!laps || laps.length === 0) {
+      stravaLapsWrap.innerHTML = `<p class="load-prompt">No split data available for this activity.</p>`;
+      return;
+    }
+
+    const rows = laps.map((lap) => {
+      const isRun = activity && (activity.type || "").toLowerCase() === "run";
+      const pace  = isRun ? fmtPace(lap.average_speed) : fmtSpeed(lap.average_speed);
+      return `
+        <tr>
+          <td>${lap.lap_index != null ? lap.lap_index : "—"}</td>
+          <td>${fmtDistance(lap.distance)}</td>
+          <td>${fmtDuration(lap.moving_time)}</td>
+          <td>${pace}</td>
+          <td>${lap.average_heartrate != null ? lap.average_heartrate + " bpm" : "—"}</td>
+          <td>${lap.max_heartrate     != null ? lap.max_heartrate     + " bpm" : "—"}</td>
+          <td>${lap.average_cadence   != null ? Math.round(lap.average_cadence) + " rpm" : "—"}</td>
+        </tr>`;
+    }).join("");
+
+    stravaLapsWrap.innerHTML = `
+      <div class="preview-table-wrap">
+        <table class="preview-table strava-laps-table">
+          <thead>
+            <tr>
+              <th>Lap</th><th>Distance</th><th>Time</th><th>Pace / Speed</th>
+              <th>Avg HR</th><th>Max HR</th><th>Cadence</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  } catch {
+    stravaLapsWrap.innerHTML = `<p class="load-prompt error-text">Failed to load splits.</p>`;
+  }
+}
+
+// ── Activity Calendar ─────────────────────────────────────────────────────────
+
+const calendarYearSelect  = document.querySelector("#calendar-year-select");
+const calendarSportSelect = document.querySelector("#calendar-sport-select");
+const calendarContainer   = document.querySelector("#calendar-container");
+const calendarPopup       = document.querySelector("#calendar-popup");
+const calendarPopupDate   = document.querySelector("#calendar-popup-date");
+const calendarPopupActs   = document.querySelector("#calendar-popup-activities");
+const calendarPopupClose  = document.querySelector("#calendar-popup-close");
+
+const CAL_MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const CAL_DAYS   = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+// Activity count → CSS class (0–4 levels, matching app blue palette)
+function calLevel(count) {
+  if (count === 0) return 0;
+  if (count === 1) return 1;
+  if (count === 2) return 2;
+  if (count === 3) return 3;
+  return 4;
+}
+
+async function initCalendar() {
+  try {
+    const [{ years }, { sports }] = await Promise.all([
+      fetchJson("/analytics/activity-calendar/years"),
+      fetchJson("/analytics/activity-calendar/sports"),
+    ]);
+
+    if (!years || years.length === 0) {
+      calendarContainer.innerHTML = `<p class="load-prompt">No activity data found. Run <code>python db/build.py</code> first.</p>`;
+      return;
+    }
+
+    calendarYearSelect.innerHTML = years.map((y) => `<option value="${y}">${y}</option>`).join("");
+
+    if (sports && sports.length > 0) {
+      calendarSportSelect.innerHTML =
+        `<option value="">All sports</option>` +
+        sports.map((s) => `<option value="${s}">${capitalize(s)}</option>`).join("");
+    }
+
+    const reloadCalendar = () =>
+      loadCalendar(parseInt(calendarYearSelect.value), calendarSportSelect.value || null);
+
+    calendarYearSelect.addEventListener("change", reloadCalendar);
+    calendarSportSelect.addEventListener("change", reloadCalendar);
+
+    loadCalendar(years[0], null);
+  } catch {
+    calendarContainer.innerHTML = `<p class="load-prompt error-text">Could not load calendar. Is the API running?</p>`;
+  }
+}
+
+async function loadCalendar(year, sport) {
+  calendarContainer.innerHTML = `<p class="load-prompt">Loading ${year}…</p>`;
+  closeCalendarPopup();
+  try {
+    const qs = sport ? `?year=${year}&sport=${encodeURIComponent(sport)}` : `?year=${year}`;
+    const { days } = await fetchJson(`/analytics/activity-calendar${qs}`);
+    renderCalendar(year, days);
+  } catch {
+    calendarContainer.innerHTML = `<p class="load-prompt error-text">Failed to load calendar data.</p>`;
+  }
+}
+
+function renderCalendar(year, days) {
+  // Build lookup: "YYYY-MM-DD" → {activity_count, sports}
+  const dataMap = new Map();
+  days.forEach((d) => dataMap.set(String(d.date).slice(0, 10), d));
+
+  // Grid starts on the Sunday on or before Jan 1
+  const jan1      = new Date(year, 0, 1);
+  const gridStart = new Date(jan1);
+  gridStart.setDate(gridStart.getDate() - jan1.getDay()); // back to Sunday
+
+  const dec31   = new Date(year, 11, 31);
+  const numWeeks = Math.ceil(((dec31 - gridStart) / 86400000 + 1) / 7);
+
+  // Collect cells and month label positions
+  const cells       = [];
+  const monthLabels = [];
+  let lastMonth     = -1;
+  let cur           = new Date(gridStart);
+
+  for (let w = 0; w < numWeeks; w++) {
+    for (let d = 0; d < 7; d++) {
+      const iso  = cur.toISOString().slice(0, 10);
+      const inYear = cur.getFullYear() === year;
+      const data   = dataMap.get(iso);
+      cells.push({ iso, inYear, count: data ? data.activity_count : 0, sports: data ? data.sports : "" });
+      if (inYear && cur.getMonth() !== lastMonth && d === 0) {
+        monthLabels.push({ week: w, name: CAL_MONTHS[cur.getMonth()] });
+        lastMonth = cur.getMonth();
+      }
+      cur.setDate(cur.getDate() + 1);
+    }
+  }
+
+  // ── DOM ──────────────────────────────────────────────────────────────────
+
+  // Month labels row
+  const monthRow = document.createElement("div");
+  monthRow.className = "cal-month-row";
+  monthRow.style.setProperty("--cal-cols", numWeeks);
+  const monthFills = Array(numWeeks).fill("");
+  monthLabels.forEach(({ week, name }) => { monthFills[week] = name; });
+  monthFills.forEach((label) => {
+    const el = document.createElement("span");
+    el.textContent = label;
+    monthRow.appendChild(el);
+  });
+
+  // Grid body: day-label column + cell grid
+  const body = document.createElement("div");
+  body.className = "cal-body";
+
+  // Day labels (show Mon, Wed, Fri only — matches GitHub style)
+  const dayLabels = document.createElement("div");
+  dayLabels.className = "cal-day-labels";
+  CAL_DAYS.forEach((name, i) => {
+    const el = document.createElement("span");
+    el.textContent = (i === 1 || i === 3 || i === 5) ? name : "";
+    dayLabels.appendChild(el);
+  });
+
+  // Cell grid
+  const grid = document.createElement("div");
+  grid.className = "cal-grid";
+  grid.style.setProperty("--cal-cols", numWeeks);
+
+  cells.forEach(({ iso, inYear, count, sports }) => {
+    const cell = document.createElement("button");
+    cell.className = `cal-cell cal-cell--${calLevel(count)}`;
+    cell.dataset.date  = iso;
+    cell.dataset.count = count;
+    cell.setAttribute("aria-label", `${iso}${count > 0 ? `: ${count} ${count === 1 ? "activity" : "activities"}` : ""}`);
+    if (!inYear) cell.classList.add("cal-cell--outside");
+    if (count > 0) {
+      cell.addEventListener("click", (e) => openCalendarPopup(iso, count, sports, e.currentTarget));
+    }
+    grid.appendChild(cell);
+  });
+
+  body.appendChild(dayLabels);
+  body.appendChild(grid);
+
+  // Legend
+  const legend = document.createElement("div");
+  legend.className = "cal-legend";
+  legend.innerHTML = `
+    <span class="cal-legend-label">Less</span>
+    ${[0,1,2,3,4].map((l) => `<span class="cal-cell cal-cell--${l} cal-legend-cell"></span>`).join("")}
+    <span class="cal-legend-label">More</span>`;
+
+  calendarContainer.innerHTML = "";
+  calendarContainer.appendChild(monthRow);
+  calendarContainer.appendChild(body);
+  calendarContainer.appendChild(legend);
+}
+
+// ── Popup ────────────────────────────────────────────────────────────────────
+
+function closeCalendarPopup() {
+  calendarPopup.classList.add("hidden");
+}
+
+async function openCalendarPopup(dateStr, count, sports, targetCell) {
+  // Position popup near the cell
+  const rect    = targetCell.getBoundingClientRect();
+  const section = document.querySelector("#calendar");
+  const secRect = section.getBoundingClientRect();
+
+  calendarPopup.style.left = `${rect.left - secRect.left}px`;
+  // Prefer showing above; fall back to below if near the top
+  const above = rect.top - secRect.top - calendarPopup.offsetHeight - 8;
+  calendarPopup.style.top  = above > 0
+    ? `${above}px`
+    : `${rect.bottom - secRect.top + 8}px`;
+
+  calendarPopupDate.textContent = new Date(dateStr + "T12:00:00").toLocaleDateString(undefined, {
+    weekday: "long", year: "numeric", month: "long", day: "numeric",
+  });
+  calendarPopupActs.innerHTML = `<p class="cal-popup-loading">Loading…</p>`;
+  calendarPopup.classList.remove("hidden");
+
+  try {
+    const { activities } = await fetchJson(`/analytics/activities-for-date?date=${dateStr}`);
+    if (!activities || activities.length === 0) {
+      calendarPopupActs.innerHTML = `<p class="cal-popup-empty">No activity detail found.</p>`;
+      return;
+    }
+    calendarPopupActs.innerHTML = activities.map((a) => {
+      const isRun = (a.sport || "").toLowerCase() === "run";
+      const pace  = isRun ? fmtPace(a.avg_speed_ms) : fmtSpeed(a.avg_speed_ms);
+      return `
+        <div class="cal-popup-activity">
+          <div class="cal-popup-activity-header">
+            <span class="cal-popup-sport">${capitalize(a.sport || "")}</span>
+            <span class="cal-popup-source">${a.data_source}</span>
+          </div>
+          ${a.name ? `<div class="cal-popup-name">${a.name}</div>` : ""}
+          <div class="cal-popup-stats">
+            <span>${fmtDistance(a.total_distance_m)}</span>
+            <span>${fmtDuration(a.moving_time_s)}</span>
+            <span>${pace}</span>
+            ${a.avg_heart_rate != null ? `<span>${Math.round(a.avg_heart_rate)} bpm</span>` : ""}
+          </div>
+        </div>`;
+    }).join("");
+  } catch {
+    calendarPopupActs.innerHTML = `<p class="cal-popup-empty">Failed to load details.</p>`;
+  }
+}
+
+calendarPopupClose.addEventListener("click", closeCalendarPopup);
+document.addEventListener("click", (e) => {
+  if (!calendarPopup.classList.contains("hidden") &&
+      !calendarPopup.contains(e.target) &&
+      !e.target.classList.contains("cal-cell")) {
+    closeCalendarPopup();
+  }
+});
+
+initCalendar();
+
+stravaBackMonths.addEventListener("click", () => showStravaView(stravaViewMonths));
+stravaBackActivities.addEventListener("click", () =>
+  loadStravaActivitiesForMonth(stravaCurrentYear, stravaCurrentMonth, stravaMonthTitle.textContent)
+);
+
+loadStravaMonths();
