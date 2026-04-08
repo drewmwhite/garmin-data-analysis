@@ -17,6 +17,8 @@ HYDRATION_DATA_GLOB = "HydrationLogFile_*.json"
 DEFAULT_HYDRATION_DATA_DIR = DATA_ROOT / "hydration"
 ACTIVITY_VO2_MAX_DATA_GLOB = "ActivityVo2Max_*.json"
 DEFAULT_ACTIVITY_VO2_MAX_DATA_DIR = DATA_ROOT / "activity_vo2_max"
+DAILY_SUMMARY_DATA_GLOB = "UDSFile_*.json"
+DEFAULT_DAILY_SUMMARY_DATA_DIR = DATA_ROOT / "daily_summary"
 SLEEP_TIMESTAMP_COLUMNS = (
     "sleepStartTimestampGMT",
     "sleepEndTimestampGMT",
@@ -31,6 +33,14 @@ HYDRATION_SORT_COLUMNS = ("calendarDate", "timestampLocal", "persistedTimestampG
 ACTIVITY_VO2_MAX_TIMESTAMP_COLUMNS = ("timestampGmt",)
 ACTIVITY_VO2_MAX_DATE_COLUMNS = ("calendarDate", "file_start_date", "file_end_date")
 ACTIVITY_VO2_MAX_SORT_COLUMNS = ("calendarDate", "timestampGmt")
+DAILY_SUMMARY_TIMESTAMP_COLUMNS = (
+    "wellnessStartTimeGmt",
+    "wellnessEndTimeGmt",
+    "wellnessStartTimeLocal",
+    "wellnessEndTimeLocal",
+)
+DAILY_SUMMARY_DATE_COLUMNS = ("calendarDate", "file_start_date", "file_end_date")
+DAILY_SUMMARY_SORT_COLUMNS = ("calendarDate", "wellnessStartTimeGmt")
 
 
 class GarminDataExtractor:
@@ -220,6 +230,28 @@ class GarminDataExtractor:
         json_output = self._records_to_json(records)
         return dataframe, json_output
 
+    def extract_daily_summary_records(self) -> list[dict[str, Any]]:
+        return self._load_records(DAILY_SUMMARY_DATA_GLOB, flatten=True)
+
+    def load_daily_summary_dataframe(self) -> "pd.DataFrame":
+        return self._records_to_dataframe(
+            self.extract_daily_summary_records(),
+            date_columns=DAILY_SUMMARY_DATE_COLUMNS,
+            timestamp_columns=DAILY_SUMMARY_TIMESTAMP_COLUMNS,
+            sort_columns=DAILY_SUMMARY_SORT_COLUMNS,
+        )
+
+    def load_daily_summary_data(self) -> tuple["pd.DataFrame", str]:
+        records = self.extract_daily_summary_records()
+        dataframe = self._records_to_dataframe(
+            records,
+            date_columns=DAILY_SUMMARY_DATE_COLUMNS,
+            timestamp_columns=DAILY_SUMMARY_TIMESTAMP_COLUMNS,
+            sort_columns=DAILY_SUMMARY_SORT_COLUMNS,
+        )
+        json_output = self._records_to_json(records)
+        return dataframe, json_output
+
 
 def load_sleep_dataframe(
     data_dir: str | Path = DEFAULT_SLEEP_DATA_DIR,
@@ -240,3 +272,10 @@ def load_activity_vo2_max_dataframe(
 ) -> "pd.DataFrame":
     extractor = GarminDataExtractor(data_dir=data_dir)
     return extractor.load_activity_vo2_max_dataframe()
+
+
+def load_daily_summary_dataframe(
+    data_dir: str | Path = DEFAULT_DAILY_SUMMARY_DATA_DIR,
+) -> "pd.DataFrame":
+    extractor = GarminDataExtractor(data_dir=data_dir)
+    return extractor.load_daily_summary_dataframe()
