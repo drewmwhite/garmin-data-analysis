@@ -1,7 +1,6 @@
 const API_BASE_URL = "http://127.0.0.1:8200/api/v1";
 
 const datasetGrid = document.querySelector("#dataset-grid");
-const previewList = document.querySelector("#preview-list");
 const apiStatus = document.querySelector("#api-status");
 
 function setStatus(text, state) {
@@ -28,35 +27,6 @@ function renderDatasetCard(dataset) {
   datasetGrid.appendChild(article);
 }
 
-function renderPreviewCard(payload) {
-  const headers = payload.dataset.sample_columns;
-  const rows = payload.records.slice(0, 5);
-
-  const headerCells = headers.map((h) => `<th scope="col">${h}</th>`).join("");
-  const bodyRows = rows
-    .map(
-      (row) =>
-        `<tr>${headers.map((h) => `<td>${row[h] ?? "—"}</td>`).join("")}</tr>`
-    )
-    .join("");
-
-  const article = document.createElement("article");
-  article.className = "preview-card";
-  article.innerHTML = `
-    <div class="preview-card-header">
-      <h3>${payload.dataset.title}</h3>
-      <span class="pill">${payload.returned_records} records</span>
-    </div>
-    <div class="preview-table-wrap">
-      <table class="preview-table">
-        <thead><tr>${headerCells}</tr></thead>
-        <tbody>${bodyRows}</tbody>
-      </table>
-    </div>
-  `;
-  previewList.appendChild(article);
-}
-
 async function fetchJson(path) {
   const res = await fetch(`${API_BASE_URL}${path}`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -67,14 +37,7 @@ async function load() {
   try {
     setStatus("Connecting…", "");
     const { datasets } = await fetchJson("/datasets");
-
     datasets.forEach(renderDatasetCard);
-
-    const previews = await Promise.all(
-      datasets.map((d) => fetchJson(`/datasets/${d.slug}?limit=5`))
-    );
-    previews.forEach(renderPreviewCard);
-
     setStatus("Connected", "success");
   } catch (err) {
     datasetGrid.innerHTML = `
@@ -88,6 +51,265 @@ async function load() {
 }
 
 load();
+
+// ── Dashboard ────────────────────────────────────────────────────────────────
+
+const dashCharts = [];
+
+function destroyDashCharts() {
+  dashCharts.forEach((c) => c.destroy());
+  dashCharts.length = 0;
+}
+
+function makeLineChart(canvasId, labels, datasets, yLabel) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const chart = new Chart(canvas, {
+    type: "line",
+    data: { labels, datasets },
+    options: {
+      animation: false,
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: datasets.length > 1 } },
+      scales: {
+        x: {
+          ticks: { maxTicksLimit: 8, font: { size: 11 } },
+          grid: { color: "rgba(0,0,0,0.05)" },
+        },
+        y: {
+          title: { display: !!yLabel, text: yLabel, font: { size: 11 } },
+          ticks: { font: { size: 11 } },
+          grid: { color: "rgba(0,0,0,0.05)" },
+        },
+      },
+    },
+  });
+  dashCharts.push(chart);
+}
+
+function fmtWeekLabel(isoDate) {
+  return new Date(isoDate).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+async function loadDashboard() {
+  try {
+    const [stepsRes, hrRes, sleepRes, vo2Res, sportRes] = await Promise.all([
+      fetchJson("/analytics/steps/daily?days=365"),
+      fetchJson("/analytics/heart-rate/trends?days=365"),
+      fetchJson("/analytics/sleep/weekly?weeks=52"),
+      fetchJson("/analytics/vo2max/trends"),
+      fetchJson("/analytics/activities/summary"),
+    ]);
+
+    destroyDashCharts();
+
+    // Steps
+    const stepsData = stepsRes.data;
+    makeLineChart(
+      "dash-steps",
+      stepsData.map((r) => fmtWeekLabel(r.date)),
+      [
+        {
+          label: "Steps",
+          data: stepsData.map((r) => r.steps),
+          borderColor: "#2563eb",
+          backgroundColor: "#2563eb18",
+          borderWidth: 1.5,
+          pointRadius: 0,
+          fill: true,
+          tension: 0.3,
+          spanGaps: true,
+        },
+        {
+          label: "7-day avg",
+          data: stepsData.map((r) => r.rolling_7d_avg),
+          borderColor: "#93c5fd",
+          borderWidth: 2,
+          pointRadius: 0,
+          fill: false,
+          tension: 0.3,
+          spanGaps: true,
+          borderDash: [4, 3],
+        },
+      ],
+      "steps"
+    );
+
+    // Resting HR
+    const hrData = hrRes.data;
+    makeLineChart(
+      "dash-hr",
+      hrData.map((r) => fmtWeekLabel(r.date)),
+      [
+        {
+          label: "Resting HR",
+          data: hrData.map((r) => r.resting_hr),
+          borderColor: "#ef4444",
+          backgroundColor: "#ef444418",
+          borderWidth: 1.5,
+          pointRadius: 0,
+          fill: true,
+          tension: 0.3,
+          spanGaps: true,
+        },
+        {
+          label: "7-day avg",
+          data: hrData.map((r) => r.rolling_7d_avg),
+          borderColor: "#fca5a5",
+          borderWidth: 2,
+          pointRadius: 0,
+          fill: false,
+          tension: 0.3,
+          spanGaps: true,
+          borderDash: [4, 3],
+        },
+      ],
+      "bpm"
+    );
+
+    // Sleep
+    const sleepData = [...sleepRes.data].reverse();
+    makeLineChart(
+      "dash-sleep",
+      sleepData.map((r) => fmtWeekLabel(r.week_start)),
+      [
+        {
+          label: "Avg hours",
+          data: sleepData.map((r) => r.avg_sleep_hours),
+          borderColor: "#9333ea",
+          backgroundColor: "#9333ea18",
+          borderWidth: 1.5,
+          pointRadius: 2,
+          fill: true,
+          tension: 0.3,
+          spanGaps: true,
+          yAxisID: "y",
+        },
+        {
+          label: "Sleep score",
+          data: sleepData.map((r) => r.avg_sleep_score),
+          borderColor: "#c084fc",
+          borderWidth: 2,
+          pointRadius: 0,
+          fill: false,
+          tension: 0.3,
+          spanGaps: true,
+          borderDash: [4, 3],
+          yAxisID: "y1",
+        },
+      ],
+    );
+    // sleep chart needs dual axes — rebuild with custom options
+    dashCharts[dashCharts.length - 1].destroy();
+    dashCharts.pop();
+    const sleepCanvas = document.getElementById("dash-sleep");
+    if (sleepCanvas) {
+      const c = new Chart(sleepCanvas, {
+        type: "line",
+        data: {
+          labels: sleepData.map((r) => fmtWeekLabel(r.week_start)),
+          datasets: [
+            {
+              label: "Avg hours",
+              data: sleepData.map((r) => r.avg_sleep_hours),
+              borderColor: "#9333ea",
+              backgroundColor: "#9333ea18",
+              borderWidth: 1.5,
+              pointRadius: 2,
+              fill: true,
+              tension: 0.3,
+              spanGaps: true,
+              yAxisID: "y",
+            },
+            {
+              label: "Score",
+              data: sleepData.map((r) => r.avg_sleep_score),
+              borderColor: "#c084fc",
+              borderWidth: 2,
+              pointRadius: 0,
+              fill: false,
+              tension: 0.3,
+              spanGaps: true,
+              borderDash: [4, 3],
+              yAxisID: "y1",
+            },
+          ],
+        },
+        options: {
+          animation: false,
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: true, labels: { font: { size: 11 } } } },
+          scales: {
+            x: { ticks: { maxTicksLimit: 8, font: { size: 11 } }, grid: { color: "rgba(0,0,0,0.05)" } },
+            y: { position: "left", title: { display: true, text: "hours", font: { size: 11 } }, ticks: { font: { size: 11 } }, grid: { color: "rgba(0,0,0,0.05)" } },
+            y1: { position: "right", title: { display: true, text: "score", font: { size: 11 } }, ticks: { font: { size: 11 } }, grid: { drawOnChartArea: false } },
+          },
+        },
+      });
+      dashCharts.push(c);
+    }
+
+    // VO2 Max — group by sport
+    const vo2Data = vo2Res.data;
+    const vo2Sports = [...new Set(vo2Data.map((r) => r.sport))];
+    const vo2Colors = ["#16a34a", "#2563eb", "#ef4444", "#f59e0b", "#9333ea"];
+    makeLineChart(
+      "dash-vo2",
+      vo2Data.filter((r) => r.sport === vo2Sports[0]).map((r) => fmtWeekLabel(r.date)),
+      vo2Sports.map((sport, i) => ({
+        label: sport,
+        data: vo2Data.filter((r) => r.sport === sport).map((r) => r.vo2_max),
+        borderColor: vo2Colors[i % vo2Colors.length],
+        borderWidth: 2,
+        pointRadius: 3,
+        fill: false,
+        tension: 0.3,
+        spanGaps: true,
+      })),
+      "mL/kg/min"
+    );
+
+    // Sport summary table
+    const sportWrap = document.getElementById("sport-summary-wrap");
+    if (sportWrap && sportRes.data.length) {
+      const rows = sportRes.data
+        .map(
+          (r) => `<tr>
+            <td>${r.sport ?? "—"}</td>
+            <td>${r.total_activities}</td>
+            <td>${r.total_distance_km != null ? r.total_distance_km + " km" : "—"}</td>
+            <td>${r.avg_distance_km != null ? r.avg_distance_km + " km" : "—"}</td>
+            <td>${r.avg_heart_rate != null ? r.avg_heart_rate + " bpm" : "—"}</td>
+            <td>${r.avg_duration_min != null ? r.avg_duration_min + " min" : "—"}</td>
+            <td>${r.total_calories != null ? r.total_calories.toLocaleString() + " kcal" : "—"}</td>
+          </tr>`
+        )
+        .join("");
+      sportWrap.innerHTML = `
+        <table class="sport-summary-table">
+          <thead>
+            <tr>
+              <th>Sport</th>
+              <th>Activities</th>
+              <th>Total dist.</th>
+              <th>Avg dist.</th>
+              <th>Avg HR</th>
+              <th>Avg duration</th>
+              <th>Total calories</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+    }
+  } catch (err) {
+    console.error("Dashboard load failed:", err);
+  }
+}
+
+loadDashboard();
 
 // ── Activities viewer ─────────────────────────────────────────────────────────
 
@@ -280,7 +502,7 @@ async function openDetail(activityId) {
   detailPanel.classList.remove("hidden");
   detailTitle.textContent = "Loading…";
   statChips.innerHTML = "";
-  destroyCharts();
+  destroyActivityCharts();
 
   detailPanel.scrollIntoView({ behavior: "smooth", block: "start" });
 
@@ -307,7 +529,7 @@ async function openDetail(activityId) {
       .map(([label, val]) => `<div class="stat-chip"><span class="stat-chip-label">${label}</span><span class="stat-chip-val">${val}</span></div>`)
       .join("");
 
-    renderCharts(records);
+    renderActivityCharts(records);
   } catch {
     detailTitle.textContent = "Failed to load activity detail.";
   }
@@ -315,15 +537,15 @@ async function openDetail(activityId) {
 
 function closeDetail() {
   detailPanel.classList.add("hidden");
-  destroyCharts();
+  destroyActivityCharts();
 }
 
-function destroyCharts() {
+function destroyActivityCharts() {
   actState.activeCharts.forEach((c) => c.destroy());
   actState.activeCharts = [];
 }
 
-function renderCharts(records) {
+function renderActivityCharts(records) {
   if (!records.length) return;
 
   // Sample down to at most 500 points to keep Chart.js responsive

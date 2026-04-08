@@ -19,7 +19,7 @@
         <a class="brand" href="/">Garmin Data</a>
         <nav class="site-nav">
           <a href="#datasets">Datasets</a>
-          <a href="#preview">Preview</a>
+          <a href="#dashboard">Dashboard</a>
           <a href="#activities">Activities</a>
         </nav>
       </div>
@@ -33,7 +33,7 @@
           A clean REST API over your raw Garmin exports. Browse datasets,
           inspect records, and build on top of structured fitness data.
         </p>
-        <a class="btn btn-primary" href="#datasets">Browse datasets</a>
+        <a class="btn btn-primary" href="#dashboard">View dashboard</a>
       </section>
 
       <section id="datasets" class="section">
@@ -44,13 +44,70 @@
         <div id="dataset-grid" class="dataset-grid"></div>
       </section>
 
-      <section id="preview" class="section">
+      <!-- ── Dashboard ──────────────────────────────────────────────────── -->
+      <section id="dashboard" class="section">
         <div class="section-header">
-          <h2>Live preview</h2>
-          <p class="section-sub">Latest records from the API</p>
+          <h2>Dashboard</h2>
+          <p class="section-sub">Trends across your health data</p>
         </div>
-        <div id="preview-list" class="preview-list"></div>
+
+        <div class="dashboard-grid">
+
+          <!-- Steps -->
+          <div class="dashboard-card">
+            <div class="dashboard-card-header">
+              <h3>Daily Steps</h3>
+              <span class="chart-legend-line chart-legend-line--blue"></span>
+            </div>
+            <div class="chart-container">
+              <canvas id="dash-steps"></canvas>
+            </div>
+          </div>
+
+          <!-- Resting HR -->
+          <div class="dashboard-card">
+            <div class="dashboard-card-header">
+              <h3>Resting Heart Rate</h3>
+              <span class="chart-legend-line chart-legend-line--red"></span>
+            </div>
+            <div class="chart-container">
+              <canvas id="dash-hr"></canvas>
+            </div>
+          </div>
+
+          <!-- Sleep -->
+          <div class="dashboard-card">
+            <div class="dashboard-card-header">
+              <h3>Sleep — Weekly Average</h3>
+              <span class="chart-legend-line chart-legend-line--purple"></span>
+            </div>
+            <div class="chart-container">
+              <canvas id="dash-sleep"></canvas>
+            </div>
+          </div>
+
+          <!-- VO2 Max -->
+          <div class="dashboard-card">
+            <div class="dashboard-card-header">
+              <h3>VO2 Max</h3>
+              <span class="chart-legend-line chart-legend-line--green"></span>
+            </div>
+            <div class="chart-container">
+              <canvas id="dash-vo2"></canvas>
+            </div>
+          </div>
+
+          <!-- Activity breakdown -->
+          <div class="dashboard-card dashboard-card--wide">
+            <div class="dashboard-card-header">
+              <h3>Activity Breakdown by Sport</h3>
+            </div>
+            <div id="sport-summary-wrap"></div>
+          </div>
+
+        </div>
       </section>
+
     </main>
 
       <section id="activities" class="section">

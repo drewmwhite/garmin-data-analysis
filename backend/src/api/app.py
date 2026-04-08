@@ -9,14 +9,24 @@ from services.duckdb_service import (
     get_activity_records,
     get_activity_session,
     get_activity_sessions,
+    get_activity_sport_summary,
+    get_daily_steps,
+    get_daily_summaries,
     get_dataset_records,
+    get_heart_rate_trends,
+    get_hydration,
+    get_sleep,
+    get_sleep_weekly_stats,
+    get_stress,
+    get_vo2_max,
+    get_vo2_max_trends,
     list_datasets,
 )
 
 
 app = FastAPI(
     title="Garmin Data Extraction API",
-    version="0.2.0",
+    version="0.3.0",
     description="REST API for Garmin health and activity data, powered by DuckDB.",
 )
 
@@ -29,10 +39,18 @@ app.add_middleware(
 )
 
 
+# ---------------------------------------------------------------------------
+# Health
+# ---------------------------------------------------------------------------
+
 @app.get("/api/v1/health")
 def health_check() -> dict[str, str]:
     return {"status": "ok"}
 
+
+# ---------------------------------------------------------------------------
+# Datasets (generic)
+# ---------------------------------------------------------------------------
 
 @app.get("/api/v1/datasets")
 def list_datasets_endpoint() -> dict[str, Any]:
@@ -49,6 +67,121 @@ def get_dataset(
         raise HTTPException(status_code=404, detail=f"Unknown dataset: {dataset_slug!r}")
     return result
 
+
+# ---------------------------------------------------------------------------
+# Sleep
+# ---------------------------------------------------------------------------
+
+@app.get("/api/v1/sleep")
+def list_sleep(
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    limit: int = Query(default=90, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    return get_sleep(date_from=date_from, date_to=date_to, limit=limit, offset=offset)
+
+
+# ---------------------------------------------------------------------------
+# Hydration
+# ---------------------------------------------------------------------------
+
+@app.get("/api/v1/hydration")
+def list_hydration(
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    limit: int = Query(default=90, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    return get_hydration(date_from=date_from, date_to=date_to, limit=limit, offset=offset)
+
+
+# ---------------------------------------------------------------------------
+# VO2 Max
+# ---------------------------------------------------------------------------
+
+@app.get("/api/v1/vo2max")
+def list_vo2_max(
+    sport: str | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    return get_vo2_max(sport=sport, limit=limit, offset=offset)
+
+
+# ---------------------------------------------------------------------------
+# Daily Summaries
+# ---------------------------------------------------------------------------
+
+@app.get("/api/v1/daily-summaries")
+def list_daily_summaries(
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    limit: int = Query(default=90, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    return get_daily_summaries(date_from=date_from, date_to=date_to, limit=limit, offset=offset)
+
+
+# ---------------------------------------------------------------------------
+# Stress
+# ---------------------------------------------------------------------------
+
+@app.get("/api/v1/stress")
+def list_stress(
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    stress_type: str | None = Query(default=None),
+    limit: int = Query(default=90, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    return get_stress(
+        date_from=date_from,
+        date_to=date_to,
+        stress_type=stress_type,
+        limit=limit,
+        offset=offset,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Analytics
+# ---------------------------------------------------------------------------
+
+@app.get("/api/v1/analytics/sleep/weekly")
+def analytics_sleep_weekly(
+    weeks: int = Query(default=52, ge=1, le=260),
+) -> dict[str, Any]:
+    return {"data": get_sleep_weekly_stats(weeks=weeks)}
+
+
+@app.get("/api/v1/analytics/steps/daily")
+def analytics_daily_steps(
+    days: int = Query(default=365, ge=7, le=1825),
+) -> dict[str, Any]:
+    return {"data": get_daily_steps(days=days)}
+
+
+@app.get("/api/v1/analytics/heart-rate/trends")
+def analytics_hr_trends(
+    days: int = Query(default=365, ge=7, le=1825),
+) -> dict[str, Any]:
+    return {"data": get_heart_rate_trends(days=days)}
+
+
+@app.get("/api/v1/analytics/vo2max/trends")
+def analytics_vo2max_trends() -> dict[str, Any]:
+    return {"data": get_vo2_max_trends()}
+
+
+@app.get("/api/v1/analytics/activities/summary")
+def analytics_activity_summary() -> dict[str, Any]:
+    return {"data": get_activity_sport_summary()}
+
+
+# ---------------------------------------------------------------------------
+# Activities
+# ---------------------------------------------------------------------------
 
 @app.get("/api/v1/activities")
 def list_activities(
