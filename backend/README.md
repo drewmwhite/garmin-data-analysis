@@ -1,59 +1,91 @@
 # Backend
 
-The backend workspace contains the Garmin extraction library, the FastAPI application, service-layer code, and backend-focused tests.
+Python extraction library, FastAPI application, and DuckDB service layer.
 
 ## Structure
 
-- `src/extraction/`: reusable extraction logic and extraction runner
-- `src/services/`: dataset service and summary helpers
-- `src/api/`: FastAPI application module
-- `tests/`: backend unit tests
-- `docs/`: backend design notes and future API documentation
-
-## Local setup
-
-Create or activate a Python 3.11+ virtual environment, then install dependencies:
-
-```bash
-./venv/bin/pip install -r backend/requirements.txt
+```text
+backend/
+├── scripts/
+│   └── upload_to_s3.py       Upload data to S3 as partitioned Parquet
+├── src/
+│   ├── api/app.py            FastAPI application and route definitions
+│   ├── extraction/
+│   │   ├── extractor.py      JSON data extractor (sleep, hydration, VO2 max, daily summary)
+│   │   ├── fit_extractor.py  Binary .fit file extractor (activity sessions + time-series)
+│   │   └── runner.py         Standalone extraction runner for local testing
+│   └── services/
+│       ├── duckdb_service.py Query layer — all API queries go through here
+│       └── data_service.py   Legacy file-based service (superseded)
+├── tests/
+│   ├── test_api.py
+│   └── test_extractor.py
+└── requirements.txt
 ```
 
-If you prefer installing the backend as a package:
+## Setup
 
 ```bash
-./venv/bin/pip install -e backend
+pip install -r backend/requirements.txt
 ```
 
-## Run the extractor
+## Build the database
 
-Run the extraction workflow in isolation:
+Before starting the API, build `garmin.duckdb` from raw data files (run from repo root):
 
 ```bash
-PYTHONPATH=backend/src ./venv/bin/python -m extraction.runner
+python db/build.py
 ```
 
-Or execute it as a package module once `backend/src` is on `PYTHONPATH` or the package is installed:
+See the [root README](../README.md) for full build options.
+
+## Start the API
 
 ```bash
-PYTHONPATH=backend/src ./venv/bin/python -m extraction.runner
+PYTHONPATH=backend/src uvicorn api:app --reload --port 8200
 ```
 
-## Run the API
+The API will return a 500 error on any request if `garmin.duckdb` has not been built yet.
 
-Start the FastAPI server from the repo root:
+## Run tests
 
 ```bash
-PYTHONPATH=backend/src ./venv/bin/uvicorn api:app --reload --port 8200
+python -m unittest discover -s backend/tests -v
 ```
 
-Available endpoints:
+## Key modules
 
-- `GET /api/v1/health`
-- `GET /api/v1/datasets`
-- `GET /api/v1/datasets/{dataset_slug}?limit=3`
+### `extraction/extractor.py` — `GarminDataExtractor`
 
-Or run the backend tests directly:
+Loads JSON export files for sleep, hydration, VO2 max, and daily summary data.
+Flattens one level of nested JSON objects into flat column names (e.g. `sleepScores_overallScore`).
 
-```bash
-./venv/bin/python -m unittest discover -s backend/tests -v
+```python
+from extraction.extractor import GarminDataExtractor
+extractor = GarminDataExtractor(data_dir="data/sleep")
+records = extractor.extract_sleep_records()   # list of dicts
+df = extractor.load_sleep_dataframe()         # pandas DataFrame
 ```
+
+### `extraction/fit_extractor.py` — `GarminFitExtractor`
+
+Parses binary Garmin `.fit` files. Supports local paths and S3 URIs via `fsspec`.
+
+```python
+from extraction.fit_extractor import GarminFitExtractor
+extractor = GarminFitExtractor()
+sessions = extractor.extract_activity_session_records(activity_limit=100)
+records = extractor.extract_activity_record_records(activity_limit=10)
+```
+
+### `services/duckdb_service.py`
+
+All API query logic. Opens `garmin.duckdb` in read-only mode per request.
+
+| Function | Description |
+| --- | --- |
+| `list_datasets()` | Row/column counts for all tables |
+| `get_dataset_records(slug, limit)` | Records from any dataset table |
+| `get_activity_sessions(...)` | Filtered, sorted, paginated sessions |
+| `get_activity_session(activity_id)` | Single session by ID |
+| `get_activity_records(activity_id)` | Time-series rows for one activity |
