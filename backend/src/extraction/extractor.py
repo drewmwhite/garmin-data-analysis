@@ -19,6 +19,8 @@ ACTIVITY_VO2_MAX_DATA_GLOB = "ActivityVo2Max_*.json"
 DEFAULT_ACTIVITY_VO2_MAX_DATA_DIR = DATA_ROOT / "activity_vo2_max"
 DAILY_SUMMARY_DATA_GLOB = "UDSFile_*.json"
 DEFAULT_DAILY_SUMMARY_DATA_DIR = DATA_ROOT / "daily_summary"
+PACEBANDS_DATA_GLOB = "*_pacebands_*.json"
+DEFAULT_PACEBANDS_DATA_DIR = DATA_ROOT / "pacebands"
 SLEEP_TIMESTAMP_COLUMNS = (
     "sleepStartTimestampGMT",
     "sleepEndTimestampGMT",
@@ -41,6 +43,15 @@ DAILY_SUMMARY_TIMESTAMP_COLUMNS = (
 )
 DAILY_SUMMARY_DATE_COLUMNS = ("calendarDate", "file_start_date", "file_end_date")
 DAILY_SUMMARY_SORT_COLUMNS = ("calendarDate", "wellnessStartTimeGmt")
+PACEBANDS_TIMESTAMP_COLUMNS: tuple[()] = ()
+PACEBANDS_DATE_COLUMNS = (
+    "paceBandSummary_createdDate",
+    "paceBandSummary_lastUpdatedDate",
+    "paceBandSummary_eventDate",
+    "file_start_date",
+    "file_end_date",
+)
+PACEBANDS_SORT_COLUMNS = ("paceBandSummary_createdDate",)
 
 
 class GarminDataExtractor:
@@ -230,6 +241,28 @@ class GarminDataExtractor:
         json_output = self._records_to_json(records)
         return dataframe, json_output
 
+    def extract_pacebands_records(self) -> list[dict[str, Any]]:
+        return self._load_records(PACEBANDS_DATA_GLOB, flatten=True)
+
+    def load_pacebands_dataframe(self) -> "pd.DataFrame":
+        return self._records_to_dataframe(
+            self.extract_pacebands_records(),
+            date_columns=PACEBANDS_DATE_COLUMNS,
+            timestamp_columns=PACEBANDS_TIMESTAMP_COLUMNS,
+            sort_columns=PACEBANDS_SORT_COLUMNS,
+        )
+
+    def load_pacebands_data(self) -> tuple["pd.DataFrame", str]:
+        records = self.extract_pacebands_records()
+        dataframe = self._records_to_dataframe(
+            records,
+            date_columns=PACEBANDS_DATE_COLUMNS,
+            timestamp_columns=PACEBANDS_TIMESTAMP_COLUMNS,
+            sort_columns=PACEBANDS_SORT_COLUMNS,
+        )
+        json_output = self._records_to_json(records)
+        return dataframe, json_output
+
     def extract_daily_summary_records(self) -> list[dict[str, Any]]:
         return self._load_records(DAILY_SUMMARY_DATA_GLOB, flatten=True)
 
@@ -279,3 +312,10 @@ def load_daily_summary_dataframe(
 ) -> "pd.DataFrame":
     extractor = GarminDataExtractor(data_dir=data_dir)
     return extractor.load_daily_summary_dataframe()
+
+
+def load_pacebands_dataframe(
+    data_dir: str | Path = DEFAULT_PACEBANDS_DATA_DIR,
+) -> "pd.DataFrame":
+    extractor = GarminDataExtractor(data_dir=data_dir)
+    return extractor.load_pacebands_dataframe()

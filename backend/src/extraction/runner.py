@@ -13,6 +13,7 @@ from extraction import (
     DEFAULT_ACTIVITY_VO2_MAX_DATA_DIR,
     DEFAULT_DAILY_SUMMARY_DATA_DIR,
     DEFAULT_HYDRATION_DATA_DIR,
+    DEFAULT_PACEBANDS_DATA_DIR,
     GarminDataExtractor,
 )
 
@@ -31,6 +32,7 @@ def run_isolated_extraction() -> None:
             GarminDataExtractor(data_dir=DEFAULT_DAILY_SUMMARY_DATA_DIR),
             "load_daily_summary_data",
         ),
+        ("pacebands", GarminDataExtractor(data_dir=DEFAULT_PACEBANDS_DATA_DIR), "load_pacebands_data"),
     )
 
     for dataset_name, extractor, load_method_name in datasets:
