@@ -64,29 +64,26 @@ DATASET_META: dict[str, dict[str, str]] = {
 
 
 # ---------------------------------------------------------------------------
-# Connection — one connection per thread
+# Connection — one shared connection guarded by a re-entrant lock
 #
-# DuckDB connections are not thread-safe.  FastAPI runs sync endpoints in a
-# thread pool, so sharing one connection across threads causes crashes.
-# threading.local() gives each worker thread its own connection.  Multiple
-# connections to the same file are supported by DuckDB.
+# In practice this app mixes analytics reads and training-plan writes against
+# the same DuckDB file within one process. Recent DuckDB versions reject
+# opening the same file concurrently with different connection configurations,
+# and multiple handles have also produced unique file handle conflicts here.
 #
-# When db/build.py atomically replaces garmin.duckdb the file mtime changes.
-# Each thread detects this on its next request and reconnects to the new file.
+# The pragmatic fix is to serialize database access through one shared
+# connection. This avoids config mismatches entirely and still keeps the app
+# correct for the current workload.
 # ---------------------------------------------------------------------------
 
-_local = threading.local()   # per-thread state: .conn, .mtime
-_mtime_lock = threading.Lock()
-_latest_mtime: float = 0.0   # last known mtime, updated by any thread
+DB_LOCK = threading.RLock()
+_conn: duckdb.DuckDBPyConnection | None = None
+_conn_mtime: float = 0.0
 
 
 def _get_conn() -> duckdb.DuckDBPyConnection:
-    """Return this thread's DuckDB connection.
-
-    Opens a new connection on first use and reconnects automatically when the
-    database file is replaced by a fresh build.
-    """
-    global _latest_mtime
+    """Return the shared DuckDB connection, reconnecting if the file changed."""
+    global _conn, _conn_mtime
 
     if not DB_PATH.exists():
         raise RuntimeError(
@@ -96,41 +93,34 @@ def _get_conn() -> duckdb.DuckDBPyConnection:
 
     file_mtime = DB_PATH.stat().st_mtime
 
-    # Broadcast a file change so all threads know to reconnect.
-    with _mtime_lock:
-        if file_mtime != _latest_mtime:
-            _latest_mtime = file_mtime
+    if _conn is not None and _conn_mtime == file_mtime:
+        return _conn
 
-    thread_conn: duckdb.DuckDBPyConnection | None = getattr(_local, "conn", None)
-    thread_mtime: float = getattr(_local, "mtime", 0.0)
-
-    if thread_conn is not None and thread_mtime == file_mtime:
-        return thread_conn
-
-    # First connect or file was replaced — open a fresh connection for this thread.
-    if thread_conn is not None:
+    if _conn is not None:
         try:
-            thread_conn.close()
+            _conn.close()
         except Exception:
             pass
 
-    _local.conn = duckdb.connect(str(DB_PATH))
-    _local.mtime = file_mtime
-    return _local.conn
+    _conn = duckdb.connect(str(DB_PATH))
+    _conn_mtime = file_mtime
+    return _conn
 
 
 def _rows_to_dicts(sql: str, params: list | None = None) -> list[dict[str, Any]]:
     """Execute a query and return results as a list of dicts."""
-    conn = _get_conn()
-    rel = conn.execute(sql, params or [])
-    columns = [desc[0] for desc in rel.description]
-    return [dict(zip(columns, row)) for row in rel.fetchall()]
+    with DB_LOCK:
+        conn = _get_conn()
+        rel = conn.execute(sql, params or [])
+        columns = [desc[0] for desc in rel.description]
+        return [dict(zip(columns, row)) for row in rel.fetchall()]
 
 
 def _scalar(sql: str, params: list | None = None) -> Any:
-    conn = _get_conn()
-    row = conn.execute(sql, params or []).fetchone()
-    return row[0] if row is not None else None
+    with DB_LOCK:
+        conn = _get_conn()
+        row = conn.execute(sql, params or []).fetchone()
+        return row[0] if row is not None else None
 
 
 # ---------------------------------------------------------------------------
@@ -140,7 +130,6 @@ def _scalar(sql: str, params: list | None = None) -> Any:
 def list_datasets() -> list[dict[str, Any]]:
     """Return metadata + row/column counts for all known tables."""
     results = []
-    conn = _get_conn()
     for table, meta in DATASET_META.items():
         try:
             count = _scalar(f"SELECT COUNT(*) FROM {table}")

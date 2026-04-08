@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import sys
 import tempfile
-import threading
 import unittest
 from datetime import date, timedelta
 from pathlib import Path
@@ -55,12 +54,15 @@ class TrainingPlanServiceTests(unittest.TestCase):
         self.duckdb_db_patch = patch("services.duckdb_service.DB_PATH", self.db_path)
         self.db_patch.start()
         self.duckdb_db_patch.start()
-        duckdb_service._local = threading.local()
-        duckdb_service._latest_mtime = 0.0
+        duckdb_service._conn = None
+        duckdb_service._conn_mtime = 0.0
 
     def tearDown(self) -> None:
         self.db_patch.stop()
         self.duckdb_db_patch.stop()
+        if duckdb_service._conn is not None:
+            duckdb_service._conn.close()
+            duckdb_service._conn = None
         self.temp_dir.cleanup()
 
     def _mock_plan(self, race_date: str) -> dict:
@@ -260,6 +262,97 @@ class TrainingPlanServiceTests(unittest.TestCase):
         )
         artifacts = list((artifact_dir / "training_plan_responses").glob("*.json"))
         self.assertEqual(len(artifacts), 1)
+
+    def test_update_training_plan_workout_updates_fields_and_week_assignment(self) -> None:
+        request_payload = {
+            "race_type": "running",
+            "race_date": (date.today() + timedelta(days=8)).isoformat(),
+            "goal_time": None,
+            "event_name_or_distance": "10k",
+            "area_of_emphasis": "Return to consistency",
+            "injury_history": "",
+            "other_thoughts": "",
+            "include_strength": False,
+            "include_mobility": True,
+            "equipment": "",
+            "preferred_days": [],
+            "blocked_days": [],
+            "triathlon_disciplines": [],
+            "triathlon_notes": "",
+        }
+
+        with patch("services.training_plan_service._call_openai_plan", return_value=self._mock_plan(request_payload["race_date"])):
+            plan = training_plan_service.generate_training_plan(request_payload)
+
+        workout = plan["weeks"][0]["workouts"][0]
+        updated = training_plan_service.update_training_plan_workout(
+            workout["workout_id"],
+            {
+                "workout_date": plan["weeks"][1]["week_start"],
+                "discipline": "cycling",
+                "title": "Edited workout",
+                "description": "Updated description.",
+                "duration_minutes": 55,
+                "distance_miles": 18.5,
+                "intensity": "steady",
+                "is_rest_day": False,
+                "is_cross_training": True,
+                "mobility_notes": "Open hips.",
+                "strength_notes": "Light lifting.",
+                "injury_notes": "Back off if symptoms return.",
+            },
+        )
+
+        week_one_ids = {item["workout_id"] for item in updated["weeks"][0]["workouts"]}
+        week_two_workout = next(item for item in updated["weeks"][1]["workouts"] if item["workout_id"] == workout["workout_id"])
+
+        self.assertNotIn(workout["workout_id"], week_one_ids)
+        self.assertEqual(week_two_workout["title"], "Edited workout")
+        self.assertEqual(week_two_workout["discipline"], "cycling")
+        self.assertEqual(week_two_workout["duration_minutes"], 55)
+        self.assertEqual(week_two_workout["distance_miles"], 18.5)
+        self.assertTrue(week_two_workout["is_cross_training"])
+
+    def test_update_training_plan_workout_rejects_date_outside_plan(self) -> None:
+        request_payload = {
+            "race_type": "running",
+            "race_date": (date.today() + timedelta(days=8)).isoformat(),
+            "goal_time": None,
+            "event_name_or_distance": "10k",
+            "area_of_emphasis": "Return to consistency",
+            "injury_history": "",
+            "other_thoughts": "",
+            "include_strength": False,
+            "include_mobility": True,
+            "equipment": "",
+            "preferred_days": [],
+            "blocked_days": [],
+            "triathlon_disciplines": [],
+            "triathlon_notes": "",
+        }
+
+        with patch("services.training_plan_service._call_openai_plan", return_value=self._mock_plan(request_payload["race_date"])):
+            plan = training_plan_service.generate_training_plan(request_payload)
+
+        workout = plan["weeks"][0]["workouts"][0]
+        with self.assertRaises(ValueError):
+            training_plan_service.update_training_plan_workout(
+                workout["workout_id"],
+                {
+                    "workout_date": (date.fromisoformat(request_payload["race_date"]) + timedelta(days=14)).isoformat(),
+                    "discipline": "running",
+                    "title": "Edited workout",
+                    "description": "Updated description.",
+                    "duration_minutes": 55,
+                    "distance_miles": 18.5,
+                    "intensity": "steady",
+                    "is_rest_day": False,
+                    "is_cross_training": False,
+                    "mobility_notes": "",
+                    "strength_notes": "",
+                    "injury_notes": "",
+                },
+            )
 
 
 if __name__ == "__main__":

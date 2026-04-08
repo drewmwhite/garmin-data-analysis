@@ -38,6 +38,7 @@ from services.training_plan_service import (
     get_active_training_plan,
     get_upcoming_plan_workouts,
     list_training_plans,
+    update_training_plan_workout,
 )
 
 
@@ -104,6 +105,32 @@ class TrainingPlanRequest(BaseModel):
         return {
             **self.model_dump(),
             "race_date": self.race_date.isoformat(),
+        }
+
+
+class TrainingPlanWorkoutUpdateRequest(BaseModel):
+    workout_date: date
+    discipline: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    description: str = ""
+    duration_minutes: int | None = Field(default=None, ge=0)
+    distance_miles: float | None = Field(default=None, ge=0)
+    intensity: str = ""
+    is_rest_day: bool = False
+    is_cross_training: bool = False
+    mobility_notes: str = ""
+    strength_notes: str = ""
+    injury_notes: str = ""
+
+    @field_validator("discipline", "title", "description", "intensity", "mobility_notes", "strength_notes", "injury_notes")
+    @classmethod
+    def strip_text_fields(cls, value: str) -> str:
+        return value.strip()
+
+    def to_service_payload(self) -> dict[str, Any]:
+        return {
+            **self.model_dump(),
+            "workout_date": self.workout_date.isoformat(),
         }
 
 
@@ -420,3 +447,18 @@ def get_upcoming_training_plan(days: int = Query(default=7, ge=1, le=21)) -> dic
 @app.get("/api/v1/training-plans")
 def list_training_plans_endpoint() -> dict[str, Any]:
     return {"plans": list_training_plans()}
+
+
+@app.put("/api/v1/training-plans/workouts/{workout_id}")
+def update_training_plan_workout_endpoint(
+    workout_id: str,
+    request: TrainingPlanWorkoutUpdateRequest,
+) -> dict[str, Any]:
+    try:
+        return update_training_plan_workout(workout_id, request.to_service_payload())
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc

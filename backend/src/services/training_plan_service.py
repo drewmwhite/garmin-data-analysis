@@ -4,7 +4,6 @@ import json
 import logging
 import os
 import socket
-import threading
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -16,11 +15,11 @@ from urllib.request import Request, urlopen
 import duckdb
 from dotenv import load_dotenv
 
-from services.duckdb_service import DB_PATH, REPO_ROOT
+from services.duckdb_service import DB_LOCK, DB_PATH, REPO_ROOT, _get_conn
 
 load_dotenv(REPO_ROOT / ".env")
 
-_WRITE_LOCK = threading.Lock()
+_WRITE_LOCK = DB_LOCK
 
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 DEFAULT_OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5")
@@ -156,26 +155,19 @@ def _normalize_sport_name(value: str | None) -> str:
 
 
 def _connect_rw() -> duckdb.DuckDBPyConnection:
-    if not DB_PATH.exists():
-        raise RuntimeError(
-            f"garmin.duckdb not found at {DB_PATH}. Run `python db/build.py` to build the database first."
-        )
-    return duckdb.connect(str(DB_PATH))
+    return _get_conn()
 
 
 def _query_rows(sql: str, params: list[Any] | None = None) -> list[dict[str, Any]]:
-    conn = duckdb.connect(str(DB_PATH))
-    try:
+    with DB_LOCK:
+        conn = _get_conn()
         rel = conn.execute(sql, params or [])
         columns = [desc[0] for desc in rel.description]
         return [dict(zip(columns, row)) for row in rel.fetchall()]
-    finally:
-        conn.close()
 
 
 def ensure_training_plan_tables(conn: duckdb.DuckDBPyConnection | None = None) -> None:
-    owns_conn = conn is None
-    if owns_conn:
+    if conn is None:
         conn = _connect_rw()
 
     try:
@@ -235,8 +227,7 @@ def ensure_training_plan_tables(conn: duckdb.DuckDBPyConnection | None = None) -
             """
         )
     finally:
-        if owns_conn and conn is not None:
-            conn.close()
+        pass
 
 
 def get_training_history_summary() -> dict[str, Any]:
@@ -793,34 +784,31 @@ def generate_training_plan(request_payload: dict[str, Any]) -> dict[str, Any]:
 
     with _WRITE_LOCK:
         conn = _connect_rw()
-        try:
-            ensure_training_plan_tables(conn)
-            cached_plan = _fetch_matching_plan_bundle(conn, request_payload_json, history_summary_json)
-            if cached_plan is not None:
-                logger.info(
-                    "Reusing cached training plan without a new OpenAI call. plan_id=%s",
-                    cached_plan["plan"]["plan_id"],
-                )
-                if cached_plan["plan"]["status"] != "active":
-                    now = datetime.now(timezone.utc).replace(tzinfo=None)
-                    conn.execute("BEGIN TRANSACTION")
-                    try:
-                        conn.execute(
-                            "UPDATE training_plans SET status = 'archived', archived_at = ? WHERE status = 'active'",
-                            [now],
-                        )
-                        conn.execute(
-                            "UPDATE training_plans SET status = 'active', archived_at = NULL WHERE plan_id = ?",
-                            [cached_plan["plan"]["plan_id"]],
-                        )
-                        conn.execute("COMMIT")
-                    except Exception:
-                        conn.execute("ROLLBACK")
-                        raise
-                    cached_plan = _fetch_plan_bundle(conn, "WHERE plan_id = ?", [cached_plan["plan"]["plan_id"]])
-                return cached_plan
-        finally:
-            conn.close()
+        ensure_training_plan_tables(conn)
+        cached_plan = _fetch_matching_plan_bundle(conn, request_payload_json, history_summary_json)
+        if cached_plan is not None:
+            logger.info(
+                "Reusing cached training plan without a new OpenAI call. plan_id=%s",
+                cached_plan["plan"]["plan_id"],
+            )
+            if cached_plan["plan"]["status"] != "active":
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
+                conn.execute("BEGIN TRANSACTION")
+                try:
+                    conn.execute(
+                        "UPDATE training_plans SET status = 'archived', archived_at = ? WHERE status = 'active'",
+                        [now],
+                    )
+                    conn.execute(
+                        "UPDATE training_plans SET status = 'active', archived_at = NULL WHERE plan_id = ?",
+                        [cached_plan["plan"]["plan_id"]],
+                    )
+                    conn.execute("COMMIT")
+                except Exception:
+                    conn.execute("ROLLBACK")
+                    raise
+                cached_plan = _fetch_plan_bundle(conn, "WHERE plan_id = ?", [cached_plan["plan"]["plan_id"]])
+            return cached_plan
 
     response_payload = _call_openai_plan(prompt_payload)
     normalized_response_payload, normalization_issues = _normalize_plan_structure(
@@ -956,8 +944,6 @@ def generate_training_plan(request_payload: dict[str, Any]) -> dict[str, Any]:
             conn.execute("ROLLBACK")
             logger.exception("Failed to save generated training plan. plan_id=%s", plan_id)
             raise
-        finally:
-            conn.close()
 
     result = get_active_training_plan()
     if result is None:
@@ -968,38 +954,32 @@ def generate_training_plan(request_payload: dict[str, Any]) -> dict[str, Any]:
 def get_active_training_plan() -> dict[str, Any] | None:
     with _WRITE_LOCK:
         conn = _connect_rw()
-        try:
-            ensure_training_plan_tables(conn)
-            plan = _fetch_plan_bundle(conn, "WHERE status = 'active'", [])
-            logger.info("Loaded active training plan. found=%s", bool(plan))
-            return plan
-        finally:
-            conn.close()
+        ensure_training_plan_tables(conn)
+        plan = _fetch_plan_bundle(conn, "WHERE status = 'active'", [])
+        logger.info("Loaded active training plan. found=%s", bool(plan))
+        return plan
 
 
 def list_training_plans() -> list[dict[str, Any]]:
     with _WRITE_LOCK:
         conn = _connect_rw()
-        try:
-            ensure_training_plan_tables(conn)
-            rows = conn.execute(
-                """
-                SELECT
-                    plan_id,
-                    created_at,
-                    archived_at,
-                    status,
-                    race_type,
-                    CAST(race_date AS DATE) AS race_date,
-                    goal_time,
-                    event_name_or_distance,
-                    plan_title
-                FROM training_plans
-                ORDER BY created_at DESC
-                """
-            ).fetchall()
-        finally:
-            conn.close()
+        ensure_training_plan_tables(conn)
+        rows = conn.execute(
+            """
+            SELECT
+                plan_id,
+                created_at,
+                archived_at,
+                status,
+                race_type,
+                CAST(race_date AS DATE) AS race_date,
+                goal_time,
+                event_name_or_distance,
+                plan_title
+            FROM training_plans
+            ORDER BY created_at DESC
+            """
+        ).fetchall()
 
     plans = []
     for row in rows:
@@ -1017,6 +997,82 @@ def list_training_plans() -> list[dict[str, Any]]:
             }
         )
     return plans
+
+
+def update_training_plan_workout(workout_id: str, workout_payload: dict[str, Any]) -> dict[str, Any]:
+    with _WRITE_LOCK:
+        conn = _connect_rw()
+        ensure_training_plan_tables(conn)
+        row = conn.execute(
+            """
+            SELECT w.plan_id, p.status
+            FROM training_plan_workouts w
+            JOIN training_plans p ON p.plan_id = w.plan_id
+            WHERE w.workout_id = ?
+            """,
+            [workout_id],
+        ).fetchone()
+        if row is None:
+            raise LookupError(f"Workout not found: {workout_id}")
+
+        plan_id, plan_status = row
+        if plan_status != "active":
+            raise ValueError("Only workouts from the active plan can be edited.")
+
+        week_row = conn.execute(
+            """
+            SELECT week_number
+            FROM training_plan_weeks
+            WHERE plan_id = ?
+              AND ? BETWEEN week_start AND week_end
+            ORDER BY week_number
+            LIMIT 1
+            """,
+            [plan_id, workout_payload["workout_date"]],
+        ).fetchone()
+        if week_row is None:
+            raise ValueError("Workout date must fall within the active plan schedule.")
+
+        conn.execute(
+            """
+            UPDATE training_plan_workouts
+            SET
+                week_number = ?,
+                workout_date = ?,
+                discipline = ?,
+                title = ?,
+                description = ?,
+                duration_minutes = ?,
+                distance_miles = ?,
+                intensity = ?,
+                is_rest_day = ?,
+                is_cross_training = ?,
+                mobility_notes = ?,
+                strength_notes = ?,
+                injury_notes = ?
+            WHERE workout_id = ?
+            """,
+            [
+                week_row[0],
+                workout_payload["workout_date"],
+                _normalize_sport_name(workout_payload["discipline"]),
+                workout_payload["title"],
+                workout_payload["description"],
+                workout_payload["duration_minutes"],
+                workout_payload["distance_miles"],
+                workout_payload["intensity"],
+                workout_payload["is_rest_day"],
+                workout_payload["is_cross_training"],
+                workout_payload["mobility_notes"],
+                workout_payload["strength_notes"],
+                workout_payload["injury_notes"],
+                workout_id,
+            ],
+        )
+        plan = _fetch_plan_bundle(conn, "WHERE plan_id = ?", [plan_id])
+        if plan is None:
+            raise RuntimeError("Updated workout but could not reload the active plan.")
+        return plan
 
 
 def get_upcoming_plan_workouts(days: int = 7) -> dict[str, Any]:

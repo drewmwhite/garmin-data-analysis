@@ -341,6 +341,7 @@ const planTriathlonNotes = document.querySelector("#plan-triathlon-notes");
 const planOutput = document.querySelector("#plan-output");
 const planFormMessage = document.querySelector("#plan-form-message");
 const planGenerateBtn = document.querySelector("#plan-generate-btn");
+const canEditTrainingPlan = Boolean(planBuilderForm);
 
 function setPlanStatus(text, state) {
   if (!planStatus) return;
@@ -379,6 +380,111 @@ function fmtWorkoutSubtitle(workout) {
     parts.push(capitalize(workout.intensity));
   }
   return parts.join(" • ") || "Planned session";
+}
+
+function serializeWorkoutField(value) {
+  return value == null ? "" : escapeHtml(String(value));
+}
+
+function renderWorkoutEditForm(workout) {
+  if (!canEditTrainingPlan) return "";
+  return `
+    <div class="plan-workout-actions">
+      <button type="button" class="btn btn-secondary plan-workout-edit-btn" data-workout-edit="${escapeHtml(workout.workout_id)}">Edit workout</button>
+    </div>
+    <form class="plan-workout-edit-form hidden" data-workout-form="${escapeHtml(workout.workout_id)}">
+      <div class="plan-form-grid">
+        <label class="form-field">
+          <span>Date</span>
+          <input type="date" name="workout_date" value="${serializeWorkoutField(workout.workout_date)}" required />
+        </label>
+        <label class="form-field">
+          <span>Discipline</span>
+          <input type="text" name="discipline" value="${serializeWorkoutField(workout.discipline)}" required />
+        </label>
+        <label class="form-field">
+          <span>Title</span>
+          <input type="text" name="title" value="${serializeWorkoutField(workout.title)}" required />
+        </label>
+        <label class="form-field">
+          <span>Intensity</span>
+          <input type="text" name="intensity" value="${serializeWorkoutField(workout.intensity)}" />
+        </label>
+        <label class="form-field">
+          <span>Duration Minutes</span>
+          <input type="number" name="duration_minutes" min="0" step="1" value="${serializeWorkoutField(workout.duration_minutes)}" />
+        </label>
+        <label class="form-field">
+          <span>Distance Miles</span>
+          <input type="number" name="distance_miles" min="0" step="0.1" value="${serializeWorkoutField(workout.distance_miles)}" />
+        </label>
+        <label class="form-field form-field--full">
+          <span>Description</span>
+          <textarea name="description" rows="3">${serializeWorkoutField(workout.description)}</textarea>
+        </label>
+        <label class="form-field form-field--full">
+          <span>Mobility Notes</span>
+          <textarea name="mobility_notes" rows="2">${serializeWorkoutField(workout.mobility_notes)}</textarea>
+        </label>
+        <label class="form-field form-field--full">
+          <span>Strength Notes</span>
+          <textarea name="strength_notes" rows="2">${serializeWorkoutField(workout.strength_notes)}</textarea>
+        </label>
+        <label class="form-field form-field--full">
+          <span>Recovery Notes</span>
+          <textarea name="injury_notes" rows="2">${serializeWorkoutField(workout.injury_notes)}</textarea>
+        </label>
+      </div>
+      <div class="plan-form-row">
+        <label class="checkbox-field">
+          <input type="checkbox" name="is_rest_day" ${workout.is_rest_day ? "checked" : ""} />
+          <span>Rest day</span>
+        </label>
+        <label class="checkbox-field">
+          <input type="checkbox" name="is_cross_training" ${workout.is_cross_training ? "checked" : ""} />
+          <span>Cross-training</span>
+        </label>
+      </div>
+      <div class="plan-form-actions">
+        <button type="submit" class="btn btn-primary">Save changes</button>
+        <button type="button" class="btn btn-secondary" data-workout-cancel="${escapeHtml(workout.workout_id)}">Cancel</button>
+        <p class="form-inline-message" data-workout-message></p>
+      </div>
+    </form>
+  `;
+}
+
+function parseOptionalNumber(value, parser) {
+  if (value == null || value === "") return null;
+  const parsed = parser(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function buildWorkoutUpdatePayload(form) {
+  const formData = new FormData(form);
+  return {
+    workout_date: String(formData.get("workout_date") || ""),
+    discipline: String(formData.get("discipline") || "").trim(),
+    title: String(formData.get("title") || "").trim(),
+    description: String(formData.get("description") || "").trim(),
+    duration_minutes: parseOptionalNumber(formData.get("duration_minutes"), Number.parseInt),
+    distance_miles: parseOptionalNumber(formData.get("distance_miles"), Number.parseFloat),
+    intensity: String(formData.get("intensity") || "").trim(),
+    is_rest_day: formData.get("is_rest_day") === "on",
+    is_cross_training: formData.get("is_cross_training") === "on",
+    mobility_notes: String(formData.get("mobility_notes") || "").trim(),
+    strength_notes: String(formData.get("strength_notes") || "").trim(),
+    injury_notes: String(formData.get("injury_notes") || "").trim(),
+  };
+}
+
+function hideWorkoutEditForms(exceptWorkoutId = "") {
+  if (!planOutput) return;
+  planOutput.querySelectorAll(".plan-workout-edit-form").forEach((form) => {
+    if (form.dataset.workoutForm !== exceptWorkoutId) {
+      form.classList.add("hidden");
+    }
+  });
 }
 
 function renderUpcomingPlan(payload) {
@@ -444,6 +550,7 @@ function renderTrainingPlan(payload) {
         ${workout.mobility_notes ? `<p class="plan-workout-note">Mobility: ${escapeHtml(workout.mobility_notes)}</p>` : ""}
         ${workout.strength_notes ? `<p class="plan-workout-note">Strength: ${escapeHtml(workout.strength_notes)}</p>` : ""}
         ${workout.injury_notes ? `<p class="plan-workout-note">Recovery: ${escapeHtml(workout.injury_notes)}</p>` : ""}
+        ${renderWorkoutEditForm(workout)}
       </li>
     `).join("");
 
@@ -544,12 +651,78 @@ async function handleTrainingPlanSubmit(event) {
   }
 }
 
+async function handlePlanOutputClick(event) {
+  const editButton = event.target.closest("[data-workout-edit]");
+  if (editButton) {
+    const workoutId = editButton.dataset.workoutEdit;
+    hideWorkoutEditForms(workoutId);
+    const form = planOutput ? planOutput.querySelector(`[data-workout-form="${workoutId}"]`) : null;
+    if (form) {
+      form.classList.toggle("hidden");
+    }
+    return;
+  }
+
+  const cancelButton = event.target.closest("[data-workout-cancel]");
+  if (cancelButton) {
+    const workoutId = cancelButton.dataset.workoutCancel;
+    const form = planOutput ? planOutput.querySelector(`[data-workout-form="${workoutId}"]`) : null;
+    if (form) {
+      form.classList.add("hidden");
+    }
+  }
+}
+
+async function handleWorkoutEditSubmit(event) {
+  const form = event.target.closest(".plan-workout-edit-form");
+  if (!form) return;
+
+  event.preventDefault();
+  const workoutId = form.dataset.workoutForm;
+  const message = form.querySelector("[data-workout-message]");
+  const submitButton = form.querySelector('button[type="submit"]');
+  const payload = buildWorkoutUpdatePayload(form);
+
+  if (message) message.textContent = "";
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = "Saving…";
+  }
+
+  try {
+    const plan = await fetchJson(`/training-plans/workouts/${encodeURIComponent(workoutId)}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    renderTrainingPlan(plan);
+    if (message) message.textContent = "Workout updated.";
+    if (planFormMessage) planFormMessage.textContent = "Workout updated.";
+    if (upcomingPlanWrap) {
+      renderUpcomingPlan(await fetchJson("/training-plans/upcoming?days=7"));
+    }
+  } catch (err) {
+    if (message) message.textContent = err.message;
+  } finally {
+    if (submitButton) {
+      submitButton.disabled = false;
+      submitButton.textContent = "Save changes";
+    }
+  }
+}
+
 if (planRaceType) {
   planRaceType.addEventListener("change", setTriathlonFieldsVisibility);
   setTriathlonFieldsVisibility();
 }
 if (planBuilderForm) {
   planBuilderForm.addEventListener("submit", handleTrainingPlanSubmit);
+}
+if (planOutput && canEditTrainingPlan) {
+  planOutput.addEventListener("click", handlePlanOutputClick);
+  planOutput.addEventListener("submit", handleWorkoutEditSubmit);
 }
 if (planOutput || upcomingPlanWrap) {
   loadTrainingPlan();

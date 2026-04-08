@@ -12,10 +12,12 @@ from pydantic import ValidationError
 
 from api.app import (
     TrainingPlanRequest,
+    TrainingPlanWorkoutUpdateRequest,
     create_training_plan,
     get_active_training_plan_endpoint,
     get_upcoming_training_plan,
     health_check,
+    update_training_plan_workout_endpoint,
 )
 
 
@@ -73,6 +75,29 @@ class ApiTests(unittest.TestCase):
 
         payload = get_upcoming_training_plan(days=7)
         self.assertEqual(payload["days"][0]["title"], "Easy run")
+
+    @patch("api.app.update_training_plan_workout")
+    def test_update_training_plan_workout_endpoint_returns_service_payload(self, mock_update) -> None:
+        mock_update.return_value = {"plan": {"plan_id": "plan-1"}, "weeks": []}
+
+        request = TrainingPlanWorkoutUpdateRequest(
+            workout_date=date.today(),
+            discipline="running",
+            title="Edited workout",
+            description="Updated description.",
+            duration_minutes=45,
+            distance_miles=5.5,
+            intensity="steady",
+            is_rest_day=False,
+            is_cross_training=False,
+            mobility_notes="",
+            strength_notes="",
+            injury_notes="",
+        )
+
+        payload = update_training_plan_workout_endpoint("workout-1", request)
+        self.assertEqual(payload["plan"]["plan_id"], "plan-1")
+        mock_update.assert_called_once()
 
 
 if __name__ == "__main__":
