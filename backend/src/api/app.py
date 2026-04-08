@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from datetime import date
+from typing import Literal
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field, field_validator
 
 from services.duckdb_service import (
     get_activities_for_date,
@@ -30,6 +33,78 @@ from services.duckdb_service import (
     get_vo2_max_trends,
     list_datasets,
 )
+from services.training_plan_service import (
+    generate_training_plan,
+    get_active_training_plan,
+    get_upcoming_plan_workouts,
+    list_training_plans,
+)
+
+
+DAY_NAMES = {
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+}
+
+
+class TrainingPlanRequest(BaseModel):
+    race_type: Literal["running", "triathlon"]
+    race_date: date
+    goal_time: str | None = None
+    event_name_or_distance: str = Field(min_length=1)
+    area_of_emphasis: str = ""
+    injury_history: str = ""
+    other_thoughts: str = ""
+    include_strength: bool = False
+    include_mobility: bool = False
+    equipment: str = ""
+    preferred_days: list[str] = Field(default_factory=list)
+    blocked_days: list[str] = Field(default_factory=list)
+    triathlon_disciplines: list[str] = Field(default_factory=list)
+    triathlon_notes: str = ""
+
+    @field_validator("preferred_days", "blocked_days")
+    @classmethod
+    def validate_day_names(cls, values: list[str]) -> list[str]:
+        normalized = []
+        for value in values:
+            day = value.strip().lower()
+            if day not in DAY_NAMES:
+                raise ValueError(f"Invalid day name: {value}")
+            if day not in normalized:
+                normalized.append(day)
+        return normalized
+
+    @field_validator("triathlon_disciplines")
+    @classmethod
+    def validate_disciplines(cls, values: list[str]) -> list[str]:
+        allowed = {"swim", "bike", "run"}
+        normalized = []
+        for value in values:
+            discipline = value.strip().lower()
+            if discipline not in allowed:
+                raise ValueError(f"Invalid triathlon discipline: {value}")
+            if discipline not in normalized:
+                normalized.append(discipline)
+        return normalized
+
+    @field_validator("race_date")
+    @classmethod
+    def validate_race_date(cls, value: date) -> date:
+        if value < date.today():
+            raise ValueError("race_date must be today or in the future.")
+        return value
+
+    def to_service_payload(self) -> dict[str, Any]:
+        return {
+            **self.model_dump(),
+            "race_date": self.race_date.isoformat(),
+        }
 
 
 app = FastAPI(
@@ -312,3 +387,36 @@ def list_unified_activities(
         limit=limit,
         offset=offset,
     )
+
+
+# ---------------------------------------------------------------------------
+# Training plans
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/v1/training-plans/generate")
+def create_training_plan(request: TrainingPlanRequest) -> dict[str, Any]:
+    try:
+        return generate_training_plan(request.to_service_payload())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/v1/training-plans/active")
+def get_active_training_plan_endpoint() -> dict[str, Any]:
+    plan = get_active_training_plan()
+    if plan is None:
+        return {"plan": None, "weeks": [], "history_summary": None, "prompt_payload": None, "wizard_input": None}
+    return plan
+
+
+@app.get("/api/v1/training-plans/upcoming")
+def get_upcoming_training_plan(days: int = Query(default=7, ge=1, le=21)) -> dict[str, Any]:
+    return get_upcoming_plan_workouts(days=days)
+
+
+@app.get("/api/v1/training-plans")
+def list_training_plans_endpoint() -> dict[str, Any]:
+    return {"plans": list_training_plans()}

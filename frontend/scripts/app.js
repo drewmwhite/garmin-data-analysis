@@ -27,9 +27,18 @@ function renderDatasetCard(dataset) {
   datasetGrid.appendChild(article);
 }
 
-async function fetchJson(path) {
-  const res = await fetch(`${API_BASE_URL}${path}`);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+async function fetchJson(path, options = {}) {
+  const res = await fetch(`${API_BASE_URL}${path}`, options);
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      const payload = await res.json();
+      if (payload && payload.detail) detail = payload.detail;
+    } catch {
+      // Ignore parse failures and fall back to status code.
+    }
+    throw new Error(detail);
+  }
   return res.json();
 }
 
@@ -311,6 +320,241 @@ async function loadDashboard() {
 
 loadDashboard();
 
+// ── Training plans ───────────────────────────────────────────────────────────
+
+const upcomingPlanWrap = document.querySelector("#upcoming-plan-wrap");
+const upcomingPlanSummary = document.querySelector("#upcoming-plan-summary");
+const planStatus = document.querySelector("#plan-status");
+const planBuilderForm = document.querySelector("#plan-builder-form");
+const planRaceType = document.querySelector("#plan-race-type");
+const planRaceDate = document.querySelector("#plan-race-date");
+const planGoalTime = document.querySelector("#plan-goal-time");
+const planEventNameOrDistance = document.querySelector("#plan-event-name-or-distance");
+const planAreaOfEmphasis = document.querySelector("#plan-area-of-emphasis");
+const planInjuryHistory = document.querySelector("#plan-injury-history");
+const planEquipment = document.querySelector("#plan-equipment");
+const planOtherThoughts = document.querySelector("#plan-other-thoughts");
+const planIncludeStrength = document.querySelector("#plan-include-strength");
+const planIncludeMobility = document.querySelector("#plan-include-mobility");
+const triathlonFields = document.querySelector("#triathlon-fields");
+const planTriathlonNotes = document.querySelector("#plan-triathlon-notes");
+const planOutput = document.querySelector("#plan-output");
+const planFormMessage = document.querySelector("#plan-form-message");
+const planGenerateBtn = document.querySelector("#plan-generate-btn");
+
+function setPlanStatus(text, state) {
+  if (!planStatus) return;
+  planStatus.textContent = text;
+  planStatus.dataset.state = state;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function collectCheckedValues(containerId) {
+  return Array.from(document.querySelectorAll(`#${containerId} input:checked`)).map((input) => input.value);
+}
+
+function setTriathlonFieldsVisibility() {
+  if (!triathlonFields || !planRaceType) return;
+  triathlonFields.classList.toggle("hidden", planRaceType.value !== "triathlon");
+}
+
+function fmtWorkoutSubtitle(workout) {
+  if (workout.is_rest_day) return "Rest day";
+  const parts = [];
+  if (workout.distance_miles != null && workout.distance_miles > 0) {
+    parts.push(`${Number(workout.distance_miles).toFixed(1)} mi`);
+  }
+  if (workout.duration_minutes != null && workout.duration_minutes > 0) {
+    parts.push(`${workout.duration_minutes} min`);
+  }
+  if (workout.intensity) {
+    parts.push(capitalize(workout.intensity));
+  }
+  return parts.join(" • ") || "Planned session";
+}
+
+function renderUpcomingPlan(payload) {
+  if (!upcomingPlanWrap || !upcomingPlanSummary) return;
+  if (!payload.plan) {
+    setPlanStatus("No active plan", "");
+    upcomingPlanSummary.textContent = "Generate a plan to see the next 7 days here.";
+    upcomingPlanWrap.innerHTML = `<p class="load-prompt">No active training plan yet.</p>`;
+    return;
+  }
+
+  setPlanStatus("Active plan", "success");
+  upcomingPlanSummary.textContent = `${payload.plan.plan_title} • Race day ${fmtDate(payload.plan.race_date)}`;
+
+  if (!payload.days || payload.days.length === 0) {
+    upcomingPlanWrap.innerHTML = `<p class="load-prompt">No planned workouts in the next 7 days.</p>`;
+    return;
+  }
+
+  const items = payload.days.map((day) => `
+    <article class="upcoming-workout">
+      <div>
+        <p class="upcoming-workout-day">${escapeHtml(day.day_name)} • ${escapeHtml(fmtDate(day.workout_date))}</p>
+        <h4>${escapeHtml(day.title)}</h4>
+        <p class="upcoming-workout-meta">${escapeHtml(capitalize(day.discipline))} • ${escapeHtml(fmtWorkoutSubtitle(day))}</p>
+        <p class="upcoming-workout-desc">${escapeHtml(day.description)}</p>
+      </div>
+    </article>
+  `).join("");
+  upcomingPlanWrap.innerHTML = `<div class="upcoming-workout-list">${items}</div>`;
+}
+
+function renderTrainingPlan(payload) {
+  if (!planOutput) return;
+  if (!payload.plan) {
+    planOutput.innerHTML = `<p class="load-prompt">No active plan yet.</p>`;
+    return;
+  }
+
+  const intro = `
+    <div class="plan-output-header">
+      <h3>${escapeHtml(payload.plan.plan_title)}</h3>
+      <p>${escapeHtml(payload.plan.overview || "")}</p>
+      <div class="dataset-meta">
+        <span class="pill">${escapeHtml(capitalize(payload.plan.race_type))}</span>
+        <span class="pill">${escapeHtml(payload.plan.event_name_or_distance)}</span>
+        <span class="pill">Race day ${escapeHtml(fmtDate(payload.plan.race_date))}</span>
+        ${payload.plan.goal_time ? `<span class="pill">Goal ${escapeHtml(payload.plan.goal_time)}</span>` : ""}
+      </div>
+    </div>
+  `;
+
+  const weeks = payload.weeks.map((week) => {
+    const workouts = week.workouts.map((workout) => `
+      <li class="plan-workout">
+        <div class="plan-workout-top">
+          <strong>${escapeHtml(fmtDate(workout.workout_date))}</strong>
+          <span>${escapeHtml(capitalize(workout.discipline))}</span>
+        </div>
+        <p class="plan-workout-title">${escapeHtml(workout.title)}</p>
+        <p class="plan-workout-meta">${escapeHtml(fmtWorkoutSubtitle(workout))}</p>
+        <p class="plan-workout-desc">${escapeHtml(workout.description)}</p>
+        ${workout.mobility_notes ? `<p class="plan-workout-note">Mobility: ${escapeHtml(workout.mobility_notes)}</p>` : ""}
+        ${workout.strength_notes ? `<p class="plan-workout-note">Strength: ${escapeHtml(workout.strength_notes)}</p>` : ""}
+        ${workout.injury_notes ? `<p class="plan-workout-note">Recovery: ${escapeHtml(workout.injury_notes)}</p>` : ""}
+      </li>
+    `).join("");
+
+    return `
+      <section class="plan-week">
+        <div class="plan-week-header">
+          <div>
+            <h4>Week ${week.week_number}</h4>
+            <p>${escapeHtml(fmtDate(week.week_start))} to ${escapeHtml(fmtDate(week.week_end))}</p>
+          </div>
+          <div class="plan-week-focus">
+            <strong>${escapeHtml(week.focus)}</strong>
+            <p>${escapeHtml(week.summary)}</p>
+          </div>
+        </div>
+        <ul class="plan-workout-list">${workouts}</ul>
+      </section>
+    `;
+  }).join("");
+
+  planOutput.innerHTML = `${intro}<div class="plan-week-list">${weeks}</div>`;
+}
+
+async function loadTrainingPlan() {
+  try {
+    setPlanStatus("Loading…", "");
+    const requests = [fetchJson("/training-plans/active")];
+    if (upcomingPlanWrap) requests.push(fetchJson("/training-plans/upcoming?days=7"));
+    const [activePlan, upcomingPlan] = await Promise.all(requests);
+    renderTrainingPlan(activePlan);
+    if (upcomingPlan) renderUpcomingPlan(upcomingPlan);
+  } catch (err) {
+    setPlanStatus("Plan error", "error");
+    if (upcomingPlanSummary) upcomingPlanSummary.textContent = "Could not load the training plan.";
+    if (upcomingPlanWrap) upcomingPlanWrap.innerHTML = `<p class="load-prompt error-text">${escapeHtml(err.message)}</p>`;
+    if (planOutput) planOutput.innerHTML = `<p class="load-prompt error-text">${escapeHtml(err.message)}</p>`;
+  }
+}
+
+function buildTrainingPlanPayload() {
+  if (!planRaceType || !planRaceDate || !planEventNameOrDistance) return null;
+  return {
+    race_type: planRaceType.value,
+    race_date: planRaceDate.value,
+    goal_time: planGoalTime.value.trim() || null,
+    event_name_or_distance: planEventNameOrDistance.value.trim(),
+    area_of_emphasis: planAreaOfEmphasis ? planAreaOfEmphasis.value.trim() : "",
+    injury_history: planInjuryHistory.value.trim(),
+    other_thoughts: planOtherThoughts ? planOtherThoughts.value.trim() : "",
+    include_strength: planIncludeStrength.checked,
+    include_mobility: planIncludeMobility.checked,
+    equipment: planEquipment.value.trim(),
+    preferred_days: collectCheckedValues("preferred-day-options"),
+    blocked_days: collectCheckedValues("blocked-day-options"),
+    triathlon_disciplines: collectCheckedValues("triathlon-discipline-options"),
+    triathlon_notes: planTriathlonNotes.value.trim(),
+  };
+}
+
+async function handleTrainingPlanSubmit(event) {
+  event.preventDefault();
+  if (planFormMessage) planFormMessage.textContent = "";
+
+  const payload = buildTrainingPlanPayload();
+  if (!payload) return;
+  if (!payload.race_date || !payload.event_name_or_distance) {
+    if (planFormMessage) planFormMessage.textContent = "Race day and event are required.";
+    return;
+  }
+
+  if (planGenerateBtn) {
+    planGenerateBtn.disabled = true;
+    planGenerateBtn.textContent = "Generating…";
+  }
+  if (planOutput) planOutput.innerHTML = `<p class="load-prompt">Generating plan from your history…</p>`;
+
+  try {
+    const plan = await fetchJson("/training-plans/generate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    if (planFormMessage) planFormMessage.textContent = "Plan generated.";
+    renderTrainingPlan(plan);
+    if (upcomingPlanWrap) {
+      renderUpcomingPlan(await fetchJson("/training-plans/upcoming?days=7"));
+    }
+  } catch (err) {
+    if (planFormMessage) planFormMessage.textContent = err.message;
+    if (planOutput) planOutput.innerHTML = `<p class="load-prompt error-text">${escapeHtml(err.message)}</p>`;
+  } finally {
+    if (planGenerateBtn) {
+      planGenerateBtn.disabled = false;
+      planGenerateBtn.textContent = "Generate plan";
+    }
+  }
+}
+
+if (planRaceType) {
+  planRaceType.addEventListener("change", setTriathlonFieldsVisibility);
+  setTriathlonFieldsVisibility();
+}
+if (planBuilderForm) {
+  planBuilderForm.addEventListener("submit", handleTrainingPlanSubmit);
+}
+if (planOutput || upcomingPlanWrap) {
+  loadTrainingPlan();
+}
+
 // ── Activities viewer ─────────────────────────────────────────────────────────
 
 const actState = {
@@ -354,7 +598,8 @@ function fmtDuration(s) {
 
 function fmtDate(ts) {
   if (!ts) return "—";
-  return new Date(ts).toLocaleDateString(undefined, {
+  const value = /^\d{4}-\d{2}-\d{2}$/.test(ts) ? `${ts}T00:00:00` : ts;
+  return new Date(value).toLocaleDateString(undefined, {
     year: "numeric", month: "short", day: "numeric",
   });
 }

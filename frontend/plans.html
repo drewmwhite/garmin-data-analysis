@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Workout Plan Builder</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles/main.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="brand" href="./index.html">Garmin Data</a>
+        <nav class="site-nav">
+          <a href="./index.html#dashboard">Dashboard</a>
+          <a href="./plans.html#plans">Plan Builder</a>
+          <a href="./index.html#activities">Activities</a>
+          <a href="./index.html#calendar">Calendar</a>
+          <a href="./index.html#strava">Strava</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <p class="hero-label">Training plan builder</p>
+        <h1>Build the next block.</h1>
+        <p class="hero-sub">
+          Generate a structured race plan from your stored training history and your current recovery constraints.
+        </p>
+        <a class="btn btn-primary" href="#plans">Start planning</a>
+      </section>
+
+      <section id="plans" class="section">
+        <div class="section-header">
+          <h2>Workout Plan Builder</h2>
+          <a class="btn btn-secondary" href="./index.html#dashboard">Back to dashboard</a>
+        </div>
+
+        <div class="dashboard-card dashboard-card--wide">
+          <form id="plan-builder-form" class="plan-builder-form">
+            <div class="plan-form-grid">
+              <label class="form-field">
+                <span>Race Type</span>
+                <select id="plan-race-type" name="race_type">
+                  <option value="running">Running</option>
+                  <option value="triathlon">Triathlon</option>
+                </select>
+              </label>
+              <label class="form-field">
+                <span>Race Day</span>
+                <input type="date" id="plan-race-date" name="race_date" required />
+              </label>
+              <label class="form-field">
+                <span>Goal Time</span>
+                <input type="text" id="plan-goal-time" name="goal_time" placeholder="Optional: 8h 30m" />
+              </label>
+              <label class="form-field">
+                <span>Event</span>
+                <input
+                  type="text"
+                  id="plan-event-name-or-distance"
+                  name="event_name_or_distance"
+                  placeholder="50-mile trail race"
+                  required
+                />
+              </label>
+              <label class="form-field form-field--full">
+                <span>Area of Emphasis</span>
+                <input
+                  type="text"
+                  id="plan-area-of-emphasis"
+                  name="area_of_emphasis"
+                  placeholder="Durability, trail climbing, injury-safe return, long-course endurance."
+                />
+              </label>
+              <label class="form-field form-field--full">
+                <span>Injury History / Recovery Constraints</span>
+                <textarea
+                  id="plan-injury-history"
+                  name="injury_history"
+                  rows="3"
+                  placeholder="Recent sciatica flare, avoid sudden mileage spikes, prioritize recovery."
+                ></textarea>
+              </label>
+              <label class="form-field form-field--full">
+                <span>Equipment</span>
+                <textarea
+                  id="plan-equipment"
+                  name="equipment"
+                  rows="2"
+                  placeholder="Pull-up bar, dumbbells, dip bar, resistance bands."
+                ></textarea>
+              </label>
+              <label class="form-field form-field--full">
+                <span>Other Thoughts</span>
+                <textarea
+                  id="plan-other-thoughts"
+                  name="other_thoughts"
+                  rows="3"
+                  placeholder="Any extra preferences, schedule realities, terrain goals, or things the plan should account for."
+                ></textarea>
+              </label>
+            </div>
+
+            <div class="plan-form-row">
+              <label class="checkbox-field">
+                <input type="checkbox" id="plan-include-strength" name="include_strength" />
+                <span>Include strength training</span>
+              </label>
+              <label class="checkbox-field">
+                <input type="checkbox" id="plan-include-mobility" name="include_mobility" checked />
+                <span>Include mobility / yoga</span>
+              </label>
+            </div>
+
+            <div class="plan-form-grid plan-form-grid--days">
+              <fieldset class="day-picker">
+                <legend>Preferred Days</legend>
+                <div class="day-option-grid" id="preferred-day-options">
+                  <label><input type="checkbox" value="monday" />Mon</label>
+                  <label><input type="checkbox" value="tuesday" />Tue</label>
+                  <label><input type="checkbox" value="wednesday" />Wed</label>
+                  <label><input type="checkbox" value="thursday" />Thu</label>
+                  <label><input type="checkbox" value="friday" />Fri</label>
+                  <label><input type="checkbox" value="saturday" />Sat</label>
+                  <label><input type="checkbox" value="sunday" />Sun</label>
+                </div>
+              </fieldset>
+              <fieldset class="day-picker">
+                <legend>Blocked Days</legend>
+                <div class="day-option-grid" id="blocked-day-options">
+                  <label><input type="checkbox" value="monday" />Mon</label>
+                  <label><input type="checkbox" value="tuesday" />Tue</label>
+                  <label><input type="checkbox" value="wednesday" />Wed</label>
+                  <label><input type="checkbox" value="thursday" />Thu</label>
+                  <label><input type="checkbox" value="friday" />Fri</label>
+                  <label><input type="checkbox" value="saturday" />Sat</label>
+                  <label><input type="checkbox" value="sunday" />Sun</label>
+                </div>
+              </fieldset>
+            </div>
+
+            <div id="triathlon-fields" class="triathlon-fields hidden">
+              <div class="plan-form-grid">
+                <fieldset class="day-picker">
+                  <legend>Triathlon Disciplines</legend>
+                  <div class="day-option-grid day-option-grid--triathlon" id="triathlon-discipline-options">
+                    <label><input type="checkbox" value="swim" checked />Swim</label>
+                    <label><input type="checkbox" value="bike" checked />Bike</label>
+                    <label><input type="checkbox" value="run" checked />Run</label>
+                  </div>
+                </fieldset>
+                <label class="form-field form-field--full">
+                  <span>Triathlon Notes</span>
+                  <textarea
+                    id="plan-triathlon-notes"
+                    name="triathlon_notes"
+                    rows="2"
+                    placeholder="Pool access on weekdays, long ride available Saturday, brick sessions welcome."
+                  ></textarea>
+                </label>
+              </div>
+            </div>
+
+            <div class="plan-form-actions">
+              <button type="submit" class="btn btn-primary" id="plan-generate-btn">Generate plan</button>
+              <p class="form-inline-message" id="plan-form-message"></p>
+            </div>
+          </form>
+        </div>
+
+        <div class="dashboard-card dashboard-card--wide plan-output-card">
+          <div class="dashboard-card-header">
+            <h3>Current Active Plan</h3>
+          </div>
+          <div id="plan-output">
+            <p class="load-prompt">No active plan yet.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="./scripts/app.js"></script>
+  </body>
+</html>

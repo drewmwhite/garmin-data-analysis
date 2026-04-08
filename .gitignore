@@ -30,6 +30,9 @@ backend/build/
 .env
 .env.*
 
+# Local logs
+logs/
+
 # Project data exports
 data/
 

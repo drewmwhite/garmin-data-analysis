@@ -64,12 +64,12 @@ DATASET_META: dict[str, dict[str, str]] = {
 
 
 # ---------------------------------------------------------------------------
-# Connection — one read-only connection per thread
+# Connection — one connection per thread
 #
 # DuckDB connections are not thread-safe.  FastAPI runs sync endpoints in a
 # thread pool, so sharing one connection across threads causes crashes.
 # threading.local() gives each worker thread its own connection.  Multiple
-# read-only connections to the same file are supported by DuckDB.
+# connections to the same file are supported by DuckDB.
 #
 # When db/build.py atomically replaces garmin.duckdb the file mtime changes.
 # Each thread detects this on its next request and reconnects to the new file.
@@ -81,7 +81,7 @@ _latest_mtime: float = 0.0   # last known mtime, updated by any thread
 
 
 def _get_conn() -> duckdb.DuckDBPyConnection:
-    """Return this thread's read-only DuckDB connection.
+    """Return this thread's DuckDB connection.
 
     Opens a new connection on first use and reconnects automatically when the
     database file is replaced by a fresh build.
@@ -114,7 +114,7 @@ def _get_conn() -> duckdb.DuckDBPyConnection:
         except Exception:
             pass
 
-    _local.conn = duckdb.connect(str(DB_PATH), read_only=True)
+    _local.conn = duckdb.connect(str(DB_PATH))
     _local.mtime = file_mtime
     return _local.conn
 

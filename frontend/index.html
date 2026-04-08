@@ -20,6 +20,7 @@
         <nav class="site-nav">
           <a href="#datasets">Datasets</a>
           <a href="#dashboard">Dashboard</a>
+          <a href="./plans.html">Plan Builder</a>
           <a href="#activities">Activities</a>
           <a href="#calendar">Calendar</a>
           <a href="#strava">Strava</a>
@@ -54,6 +55,24 @@
         </div>
 
         <div class="dashboard-grid">
+          <div class="dashboard-card dashboard-card--wide" id="upcoming-plan-card">
+            <div class="dashboard-card-header">
+              <h3>Upcoming 7 Days</h3>
+              <span class="status-badge" id="plan-status">Loading…</span>
+            </div>
+            <p class="dashboard-card-copy" id="upcoming-plan-summary">Checking for an active plan…</p>
+            <div id="upcoming-plan-wrap"></div>
+          </div>
+
+          <div class="dashboard-card dashboard-card--wide" id="plans">
+            <div class="dashboard-card-header">
+              <h3>Current Active Plan</h3>
+              <a class="btn btn-primary" href="./plans.html">Open plan builder</a>
+            </div>
+            <div id="plan-output">
+              <p class="load-prompt">No active plan yet.</p>
+            </div>
+          </div>
 
           <!-- Steps -->
           <div class="dashboard-card">

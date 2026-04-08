@@ -63,6 +63,7 @@ from extraction.fit_extractor import (  # noqa: E402
     DEFAULT_ACTIVITY_FIT_DATA_DIR,
 )
 from extraction.strava_extractor import StravaExtractor  # noqa: E402
+from services.training_plan_service import ensure_training_plan_tables  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -610,6 +611,7 @@ def main() -> None:
 
         print()
         build_unified_activities_view(conn)
+        ensure_training_plan_tables(conn)
 
         conn.close()
 

@@ -537,6 +537,11 @@ body {
   color: var(--text);
 }
 
+.dashboard-card-copy {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
 .chart-legend-line {
   display: inline-block;
   width: 2rem;
@@ -582,6 +587,196 @@ body {
 
 .sport-summary-table tbody tr:hover {
   background: var(--bg-subtle);
+}
+
+/* ── Training plans ── */
+
+.plan-builder-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.plan-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem 1rem;
+}
+
+.plan-form-grid--days {
+  align-items: start;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.form-field--full {
+  grid-column: 1 / -1;
+}
+
+.form-field span,
+.day-picker legend {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.form-field input,
+.form-field select,
+.form-field textarea {
+  width: 100%;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+}
+
+.form-field textarea {
+  resize: vertical;
+}
+
+.form-field input:focus,
+.form-field select:focus,
+.form-field textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.plan-form-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.checkbox-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text);
+}
+
+.day-picker {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem;
+}
+
+.day-option-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.6rem 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.day-option-grid--triathlon {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.day-option-grid label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.875rem;
+}
+
+.plan-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.form-inline-message {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.upcoming-workout-list,
+.plan-week-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.upcoming-workout,
+.plan-week {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  background: var(--bg-subtle);
+}
+
+.upcoming-workout-day,
+.plan-week-header p,
+.plan-workout-meta,
+.plan-workout-note {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.upcoming-workout h4,
+.plan-output-header h3,
+.plan-week-header h4 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.upcoming-workout-meta,
+.upcoming-workout-desc,
+.plan-output-header p,
+.plan-workout-desc,
+.plan-week-focus p {
+  margin-top: 0.25rem;
+}
+
+.plan-output-header {
+  margin-bottom: 1rem;
+}
+
+.plan-week-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.plan-week-focus {
+  max-width: 440px;
+}
+
+.plan-workout-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.plan-workout {
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.plan-workout:first-child {
+  padding-top: 0;
+  border-top: none;
+}
+
+.plan-workout-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.875rem;
+}
+
+.plan-workout-title {
+  font-weight: 600;
 }
 
 /* ── Strava ── */
@@ -885,6 +1080,17 @@ body {
 
   .section-sub {
     margin-left: 0;
+  }
+
+  .plan-form-grid,
+  .dashboard-grid,
+  .day-option-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .plan-week-header,
+  .plan-workout-top {
+    flex-direction: column;
   }
 
   .charts-grid {
