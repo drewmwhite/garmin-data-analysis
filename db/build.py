@@ -35,6 +35,7 @@ import argparse
 import os
 import shutil
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import duckdb
@@ -117,6 +118,30 @@ def _drop_and_create(conn: duckdb.DuckDBPyConnection, table: str, df: pd.DataFra
     print(f"  {table}: {count:,} rows written")
 
 
+def _append_df(conn: duckdb.DuckDBPyConnection, table: str, df: pd.DataFrame) -> int:
+    """Append rows to a table, creating it first if needed."""
+    if df.empty:
+        return 0
+
+    existing_tables = {
+        row[0]
+        for row in conn.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
+        ).fetchall()
+    }
+    if table not in existing_tables:
+        conn.execute(f"CREATE TABLE {table} AS SELECT * FROM df")
+        return len(df)
+
+    table_cols = [row[0] for row in conn.execute(f"DESCRIBE {table}").fetchall()]
+    for col in table_cols:
+        if col not in df.columns:
+            df[col] = None
+    df = df[table_cols]
+    conn.execute(f"INSERT INTO {table} SELECT * FROM df")
+    return len(df)
+
+
 def _clean_df(df: pd.DataFrame) -> pd.DataFrame:
     """Drop columns that contain unhashable nested objects (lists/dicts).
     DuckDB can store these as JSON strings if needed, but for clean tabular
@@ -130,6 +155,22 @@ def _clean_df(df: pd.DataFrame) -> pd.DataFrame:
         print(f"    Dropping nested columns: {drop_cols}")
         df = df.drop(columns=drop_cols)
     return df
+
+
+def _existing_tables(conn: duckdb.DuckDBPyConnection) -> set[str]:
+    return {
+        row[0]
+        for row in conn.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
+        ).fetchall()
+    }
+
+
+def _iso_to_unix_timestamp(value: str) -> int:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return int(parsed.timestamp())
 
 
 # ---------------------------------------------------------------------------
@@ -351,7 +392,9 @@ def build_strava(
 
     Laps are inserted in batches as they are fetched so that progress is
     preserved even if the run is interrupted or the daily rate limit is hit.
-    Re-running will skip activities already present in strava_laps.
+    Re-running only requests activities newer than the latest row already in
+    strava_activities, and only fetches laps for run activities missing from
+    strava_laps.
     """
     missing = [
         v for v in ("STRAVA_CLIENT_ID", "STRAVA_CLIENT_SECRET", "STRAVA_REFRESH_TOKEN")
@@ -364,34 +407,57 @@ def build_strava(
     print("Building strava_activities + strava_laps (fetching from Strava API)...")
     extractor = StravaExtractor()
 
+    existing_tables = _existing_tables(conn)
+
     # --- Activities ---
-    activities = extractor.fetch_activities()
+    existing_activity_ids: set[int] = set()
+    after: int | None = None
+    if "strava_activities" in existing_tables:
+        existing_activity_ids = {
+            int(row[0])
+            for row in conn.execute("SELECT id FROM strava_activities").fetchall()
+            if row[0] is not None
+        }
+        latest_start = conn.execute(
+            "SELECT MAX(CAST(start_date_local AS TIMESTAMP))::VARCHAR FROM strava_activities"
+        ).fetchone()[0]
+        if latest_start:
+            after = _iso_to_unix_timestamp(latest_start)
+
+    activities = extractor.fetch_activities(after=after)
+    new_activities = [
+        activity for activity in activities if int(activity["id"]) not in existing_activity_ids
+    ]
     if limit:
-        activities = activities[:limit]
+        new_activities = new_activities[:limit]
 
-    if not activities:
-        print("  No activities returned.")
-        return
+    if new_activities:
+        activities_df = _clean_df(pd.DataFrame(new_activities))
+        written = _append_df(conn, "strava_activities", activities_df)
+        print(f"  strava_activities: {written:,} new rows written")
+    else:
+        print("  strava_activities already up to date.")
 
-    activities_df = _clean_df(pd.DataFrame(activities))
-    _drop_and_create(conn, "strava_activities", activities_df)
-    if s3_base:
+    if s3_base and "strava_activities" in _existing_tables(conn):
         s3_upload(
             conn, "strava_activities", s3_base,
             "SELECT *, year(CAST(start_date_local AS TIMESTAMP)) AS year FROM strava_activities",
             ["year"],
         )
 
-    # --- Laps (incremental, batch insert) ---
-    run_ids = [a["id"] for a in activities if (a.get("type") or "").lower() == "run"]
+    if "strava_activities" not in _existing_tables(conn):
+        print("  No Strava activities available.")
+        return
 
-    # Resume support: skip IDs already in the table.
-    existing_tables = {
-        row[0]
+    # --- Laps (incremental, batch insert) ---
+    run_ids = [
+        int(row[0])
         for row in conn.execute(
-            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
+            "SELECT id FROM strava_activities WHERE LOWER(COALESCE(type, '')) = 'run' ORDER BY start_date_local DESC"
         ).fetchall()
-    }
+        if row[0] is not None
+    ]
+
     if "strava_laps" in existing_tables:
         done_ids = {
             row[0]
@@ -408,19 +474,13 @@ def build_strava(
         return
 
     print(f"  Fetching laps for {len(remaining)} run activities (batch insert as we go)...")
-    table_created = "strava_laps" in existing_tables
     total_laps = 0
 
     for batch_laps, batch_ids in extractor.iter_laps_batched(remaining):
         if not batch_laps:
             continue
         laps_df = _clean_df(pd.DataFrame(batch_laps))
-        if not table_created:
-            conn.execute("CREATE TABLE strava_laps AS SELECT * FROM laps_df")
-            table_created = True
-        else:
-            conn.execute("INSERT INTO strava_laps SELECT * FROM laps_df")
-        total_laps += len(laps_df)
+        total_laps += _append_df(conn, "strava_laps", laps_df)
         print(f"  Saved {len(laps_df)} laps ({total_laps} total so far)...")
 
     print(f"  strava_laps: {total_laps} rows written")
