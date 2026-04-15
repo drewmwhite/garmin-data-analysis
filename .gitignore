@@ -4,6 +4,8 @@
 # Generated DuckDB database (rebuilt by running: python db/build.py)
 garmin.duckdb
 garmin.duckdb.wal
+garmin_staging.duckdb
+garmin_staging.duckdb.wal
 
 # Python virtual environments
 venv/

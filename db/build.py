@@ -35,7 +35,7 @@ import argparse
 import os
 import shutil
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import duckdb
@@ -97,13 +97,20 @@ def s3_upload(
 ) -> None:
     """Export a table to S3 as Hive-partitioned Parquet via DuckDB's COPY."""
     s3_path = f"{s3_base}/{table}/"
-    cols = ", ".join(partition_by)
+    copy_options = ["FORMAT PARQUET", "OVERWRITE_OR_IGNORE TRUE"]
+    if partition_by:
+        cols = ", ".join(partition_by)
+        copy_options.insert(1, f"PARTITION_BY ({cols})")
+        partition_label = f" (partitioned by {cols})"
+    else:
+        partition_label = ""
+    options_sql = ", ".join(copy_options)
     conn.execute(f"""
         COPY ({select})
         TO '{s3_path}'
-        (FORMAT PARQUET, PARTITION_BY ({cols}), OVERWRITE_OR_IGNORE TRUE)
+        ({options_sql})
     """)
-    print(f"    uploaded to {s3_path} (partitioned by {cols})")
+    print(f"    uploaded to {s3_path}{partition_label}")
 
 
 # ---------------------------------------------------------------------------
@@ -166,11 +173,39 @@ def _existing_tables(conn: duckdb.DuckDBPyConnection) -> set[str]:
     }
 
 
+def _ensure_strava_lap_fetch_status_table(conn: duckdb.DuckDBPyConnection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS strava_lap_fetch_status (
+            workout_id BIGINT PRIMARY KEY,
+            fetched_at TIMESTAMP,
+            lap_count INTEGER
+        )
+        """
+    )
+
+
 def _iso_to_unix_timestamp(value: str) -> int:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return int(parsed.timestamp())
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _delete_rows_by_ids(
+    conn: duckdb.DuckDBPyConnection,
+    table: str,
+    column: str,
+    values: list[int],
+) -> None:
+    if not values or table not in _existing_tables(conn):
+        return
+    placeholders = ", ".join(["?"] * len(values))
+    conn.execute(f"DELETE FROM {table} WHERE {column} IN ({placeholders})", values)
 
 
 # ---------------------------------------------------------------------------
@@ -383,29 +418,41 @@ def build_activity_records(
 
 
 def build_strava(
-    conn: duckdb.DuckDBPyConnection, limit: int | None = None, s3_base: str | None = None
+    conn: duckdb.DuckDBPyConnection,
+    limit: int | None = None,
+    s3_base: str | None = None,
+    strava_cache_dir: str | None = None,
+    strava_recent_days: int | None = None,
 ) -> None:
     """Fetch activities and laps from the Strava API and store them in DuckDB.
 
     Requires STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, and STRAVA_REFRESH_TOKEN
-    environment variables. Skipped silently if credentials are missing.
+    environment variables unless --strava-cache-dir is used.
 
     Laps are inserted in batches as they are fetched so that progress is
     preserved even if the run is interrupted or the daily rate limit is hit.
-    Re-running only requests activities newer than the latest row already in
-    strava_activities, and only fetches laps for run activities missing from
-    strava_laps.
+    Re-running requests a rolling 30-day overlap window before the latest
+    stored activity, dedupes by activity id, and only fetches laps for run
+    activities missing from strava_laps. When strava_recent_days is provided,
+    only that recent window is fetched and any returned activities/laps are
+    upserted by activity id.
     """
-    missing = [
-        v for v in ("STRAVA_CLIENT_ID", "STRAVA_CLIENT_SECRET", "STRAVA_REFRESH_TOKEN")
-        if not os.environ.get(v)
-    ]
-    if missing:
-        print(f"  Skipping Strava — missing env vars: {', '.join(missing)}")
-        return
+    using_cache = strava_cache_dir is not None
+    if using_cache:
+        print(f"Building strava_activities + strava_laps (replaying cached Strava JSON from {strava_cache_dir})...")
+        extractor = None
+    else:
+        missing = [
+            v for v in ("STRAVA_CLIENT_ID", "STRAVA_CLIENT_SECRET", "STRAVA_REFRESH_TOKEN")
+            if not os.environ.get(v)
+        ]
+        if missing:
+            print(f"  Skipping Strava — missing env vars: {', '.join(missing)}")
+            return
 
-    print("Building strava_activities + strava_laps (fetching from Strava API)...")
-    extractor = StravaExtractor()
+        print("Building strava_activities + strava_laps (fetching from Strava API)...")
+        extractor = StravaExtractor()
+        print(f"  Caching Strava API responses under {extractor.cache_run_dir}")
 
     existing_tables = _existing_tables(conn)
 
@@ -418,74 +465,148 @@ def build_strava(
             for row in conn.execute("SELECT id FROM strava_activities").fetchall()
             if row[0] is not None
         }
-        latest_start = conn.execute(
-            "SELECT MAX(CAST(start_date_local AS TIMESTAMP))::VARCHAR FROM strava_activities"
-        ).fetchone()[0]
-        if latest_start:
-            after = _iso_to_unix_timestamp(latest_start)
+        if strava_recent_days is None:
+            latest_start = conn.execute(
+                "SELECT MAX(CAST(start_date_local AS TIMESTAMP))::VARCHAR FROM strava_activities"
+            ).fetchone()[0]
+            if latest_start:
+                parsed_latest = datetime.fromisoformat(latest_start.replace("Z", "+00:00"))
+                if parsed_latest.tzinfo is None:
+                    parsed_latest = parsed_latest.replace(tzinfo=timezone.utc)
+                after = int((parsed_latest - timedelta(days=30)).timestamp())
 
-    activities = extractor.fetch_activities(after=after)
-    new_activities = [
-        activity for activity in activities if int(activity["id"]) not in existing_activity_ids
-    ]
+    if strava_recent_days is not None:
+        after = int((_utc_now() - timedelta(days=strava_recent_days)).timestamp())
+
+    if using_cache:
+        activities = StravaExtractor.load_cached_activities(strava_cache_dir)
+        if after is not None:
+            activities = [
+                activity
+                for activity in activities
+                if _iso_to_unix_timestamp(activity["start_date_local"]) > after
+            ]
+    else:
+        activities = extractor.fetch_activities(after=after)
+
+    if strava_recent_days is not None:
+        activity_rows = activities
+    else:
+        activity_rows = [
+            activity for activity in activities if int(activity["id"]) not in existing_activity_ids
+        ]
+
     if limit:
-        new_activities = new_activities[:limit]
+        activity_rows = activity_rows[:limit]
 
-    if new_activities:
-        activities_df = _clean_df(pd.DataFrame(new_activities))
-        written = _append_df(conn, "strava_activities", activities_df)
-        print(f"  strava_activities: {written:,} new rows written")
+    if activity_rows:
+        activities_df = _clean_df(pd.DataFrame(activity_rows))
+        if strava_recent_days is not None:
+            activity_ids = [int(activity["id"]) for activity in activity_rows]
+            _delete_rows_by_ids(conn, "strava_activities", "id", activity_ids)
+            written = _append_df(conn, "strava_activities", activities_df)
+            print(f"  strava_activities: {written:,} recent rows upserted")
+        else:
+            written = _append_df(conn, "strava_activities", activities_df)
+            print(f"  strava_activities: {written:,} new rows written")
     else:
         print("  strava_activities already up to date.")
-
-    if s3_base and "strava_activities" in _existing_tables(conn):
-        s3_upload(
-            conn, "strava_activities", s3_base,
-            "SELECT *, year(CAST(start_date_local AS TIMESTAMP)) AS year FROM strava_activities",
-            ["year"],
-        )
 
     if "strava_activities" not in _existing_tables(conn):
         print("  No Strava activities available.")
         return
 
     # --- Laps (incremental, batch insert) ---
-    run_ids = [
-        int(row[0])
-        for row in conn.execute(
-            "SELECT id FROM strava_activities WHERE LOWER(COALESCE(type, '')) = 'run' ORDER BY start_date_local DESC"
-        ).fetchall()
-        if row[0] is not None
-    ]
+    _ensure_strava_lap_fetch_status_table(conn)
 
-    if "strava_laps" in existing_tables:
-        done_ids = {
-            row[0]
-            for row in conn.execute("SELECT DISTINCT workout_id FROM strava_laps").fetchall()
-        }
-        remaining = [rid for rid in run_ids if rid not in done_ids]
-        if done_ids:
-            print(f"  Resuming: {len(done_ids)} activities already have laps, {len(remaining)} remaining.")
-    else:
+    if strava_recent_days is not None:
+        run_ids = [
+            int(activity["id"])
+            for activity in activity_rows
+            if str(activity.get("type", "")).lower() == "run"
+        ]
         remaining = run_ids
+        if run_ids:
+            print(f"  Refreshing laps for {len(run_ids)} recent run activities.")
+    else:
+        run_ids = [
+            int(row[0])
+            for row in conn.execute(
+                "SELECT id FROM strava_activities WHERE LOWER(COALESCE(type, '')) = 'run' ORDER BY start_date_local DESC"
+            ).fetchall()
+            if row[0] is not None
+        ]
 
-    if not remaining:
+        done_ids: set[int] = set()
+        if "strava_laps" in existing_tables:
+            done_ids.update(
+                row[0]
+                for row in conn.execute("SELECT DISTINCT workout_id FROM strava_laps").fetchall()
+                if row[0] is not None
+            )
+        done_ids.update(
+            int(row[0])
+            for row in conn.execute("SELECT workout_id FROM strava_lap_fetch_status").fetchall()
+            if row[0] is not None
+        )
+
+        if done_ids:
+            remaining = [rid for rid in run_ids if rid not in done_ids]
+            print(f"  Resuming: {len(done_ids)} activities already have lap fetch status, {len(remaining)} remaining.")
+        else:
+            remaining = run_ids
+
+    if strava_recent_days is None and not remaining:
         print("  strava_laps already up to date.")
+        return
+    if strava_recent_days is not None and not remaining:
+        print("  No recent Strava run laps to refresh.")
         return
 
     print(f"  Fetching laps for {len(remaining)} run activities (batch insert as we go)...")
     total_laps = 0
 
-    for batch_laps, batch_ids in extractor.iter_laps_batched(remaining):
-        if not batch_laps:
-            continue
-        laps_df = _clean_df(pd.DataFrame(batch_laps))
-        total_laps += _append_df(conn, "strava_laps", laps_df)
-        print(f"  Saved {len(laps_df)} laps ({total_laps} total so far)...")
+    if using_cache:
+        batch_laps: list[dict[str, Any]] = []
+        batch_ids: list[int] = []
+        for activity_id in remaining:
+            try:
+                batch_laps.extend(StravaExtractor.load_cached_laps(activity_id, strava_cache_dir))
+                batch_ids.append(activity_id)
+            except FileNotFoundError:
+                print(f"  Warning: no cached Strava detail JSON found for activity {activity_id}; skipping.")
+
+        lap_batches = [(batch_laps, batch_ids)]
+    else:
+        lap_batches = extractor.iter_laps_batched(remaining)
+
+    for batch_laps, batch_ids in lap_batches:
+        lap_counts = {activity_id: 0 for activity_id in batch_ids}
+        for lap in batch_laps:
+            workout_id = lap.get("workout_id")
+            if workout_id in lap_counts:
+                lap_counts[workout_id] += 1
+
+        if batch_laps:
+            if strava_recent_days is not None:
+                _delete_rows_by_ids(conn, "strava_laps", "workout_id", batch_ids)
+            laps_df = _clean_df(pd.DataFrame(batch_laps))
+            total_laps += _append_df(conn, "strava_laps", laps_df)
+            print(f"  Saved {len(laps_df)} laps ({total_laps} total so far)...")
+
+        if batch_ids:
+            if strava_recent_days is not None:
+                _delete_rows_by_ids(conn, "strava_lap_fetch_status", "workout_id", batch_ids)
+            fetched_at = datetime.now(timezone.utc)
+            conn.executemany(
+                """
+                INSERT OR REPLACE INTO strava_lap_fetch_status (workout_id, fetched_at, lap_count)
+                VALUES (?, ?, ?)
+                """,
+                [(activity_id, fetched_at, lap_counts.get(activity_id, 0)) for activity_id in batch_ids],
+            )
 
     print(f"  strava_laps: {total_laps} rows written")
-    if s3_base and total_laps:
-        s3_upload(conn, "strava_laps", s3_base, "SELECT * FROM strava_laps", [])
 
 
 def build_unified_activities_view(conn: duckdb.DuckDBPyConnection) -> None:
@@ -626,6 +747,18 @@ def main() -> None:
         default=os.environ.get("S3_PREFIX", "garmin"),
         help="S3 key prefix (default: 'garmin', or set S3_PREFIX env var)",
     )
+    parser.add_argument(
+        "--strava-cache-dir",
+        default=None,
+        help="Replay saved Strava JSON from this directory instead of calling the Strava API.",
+    )
+    parser.add_argument(
+        "--strava-recent-days",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Only fetch and upsert the most recent N days of Strava activities and laps.",
+    )
     args = parser.parse_args()
 
     s3_base: str | None = None
@@ -660,7 +793,13 @@ def main() -> None:
         "daily-summaries":    lambda: build_daily_summaries(conn, limit=args.limit, s3_base=s3_base),
         "activity-sessions":  lambda: build_activity_sessions(conn, limit=args.limit, s3_base=s3_base),
         "activity-records":   lambda: build_activity_records(conn, limit=args.limit, s3_base=s3_base),
-        "strava":             lambda: build_strava(conn, limit=args.limit, s3_base=s3_base),
+        "strava":             lambda: build_strava(
+            conn,
+            limit=args.limit,
+            s3_base=s3_base,
+            strava_cache_dir=args.strava_cache_dir,
+            strava_recent_days=args.strava_recent_days,
+        ),
         "view":               lambda: None,  # no-op — view is always rebuilt below
     }
 

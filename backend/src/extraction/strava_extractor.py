@@ -21,15 +21,18 @@ import json
 import os
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import httpx
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
 STRAVA_TOKEN_URL = "https://www.strava.com/oauth/token"
 STRAVA_ACTIVITIES_URL = "https://www.strava.com/api/v3/athlete/activities"
 STRAVA_ACTIVITY_URL = "https://www.strava.com/api/v3/activities/{activity_id}"
 STRAVA_ATHLETE_URL = "https://www.strava.com/api/v3/athlete"
+DEFAULT_CACHE_ROOT = REPO_ROOT / "logs" / "strava_api"
 
 DEFAULT_PER_PAGE = 200
 
@@ -47,11 +50,16 @@ class StravaExtractor:
         client_id: str | None = None,
         client_secret: str | None = None,
         refresh_token: str | None = None,
+        cache_root: str | Path | None = None,
+        cache_enabled: bool = True,
     ) -> None:
         self.client_id = client_id or os.environ["STRAVA_CLIENT_ID"]
         self.client_secret = client_secret or os.environ["STRAVA_CLIENT_SECRET"]
         self.refresh_token = refresh_token or os.environ["STRAVA_REFRESH_TOKEN"]
         self._access_token: str | None = None
+        self.cache_enabled = cache_enabled
+        self.cache_root = Path(cache_root) if cache_root is not None else DEFAULT_CACHE_ROOT
+        self.cache_run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
         # Rate-limit state (populated from response headers)
         self._limit_15min: int = _DEFAULT_LIMIT_15MIN
@@ -59,6 +67,58 @@ class StravaExtractor:
         self._usage_15min: int = 0
         self._usage_daily: int = 0
         self._window_start: float = time.monotonic()
+
+    @property
+    def cache_run_dir(self) -> Path:
+        return self.cache_root / self.cache_run_id
+
+    def _write_cache_json(self, relative_path: str | Path, payload: Any) -> Path | None:
+        if not self.cache_enabled:
+            return None
+        path = self.cache_run_dir / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str), encoding="utf-8")
+        return path
+
+    @staticmethod
+    def _load_cached_json(path: str | Path) -> Any:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+
+    @classmethod
+    def load_cached_activities(cls, cache_dir: str | Path) -> list[dict[str, Any]]:
+        cache_path = Path(cache_dir)
+        seen_ids: set[int] = set()
+        activities: list[dict[str, Any]] = []
+
+        for page_path in sorted((cache_path / "activities").glob("page-*.json")):
+            payload = cls._load_cached_json(page_path)
+            raw_activities = payload.get("raw_activities", payload if isinstance(payload, list) else [])
+            if not isinstance(raw_activities, list):
+                continue
+
+            for item in raw_activities:
+                if not isinstance(item, dict) or "id" not in item:
+                    continue
+                activity_id = int(item["id"])
+                if activity_id in seen_ids:
+                    continue
+                seen_ids.add(activity_id)
+                activities.append(_parse_activity(item))
+
+        return activities
+
+    @classmethod
+    def load_cached_activity_detail(cls, activity_id: int, cache_dir: str | Path) -> dict[str, Any]:
+        path = Path(cache_dir) / "activity_details" / f"{int(activity_id)}.json"
+        payload = cls._load_cached_json(path)
+        if not isinstance(payload, dict):
+            raise ValueError(f"Cached activity detail at {path} is not a JSON object.")
+        return payload
+
+    @classmethod
+    def load_cached_laps(cls, activity_id: int, cache_dir: str | Path) -> list[dict[str, Any]]:
+        detail = cls.load_cached_activity_detail(activity_id, cache_dir)
+        return [_parse_lap(activity_id, lap) for lap in detail.get("laps", [])]
 
     # ------------------------------------------------------------------
     # Auth
@@ -163,7 +223,15 @@ class StravaExtractor:
     # ------------------------------------------------------------------
 
     def fetch_athlete(self) -> dict[str, Any]:
-        return self._get(STRAVA_ATHLETE_URL)
+        athlete = self._get(STRAVA_ATHLETE_URL)
+        self._write_cache_json(
+            "athlete.json",
+            {
+                "fetched_at": datetime.now(timezone.utc).isoformat(),
+                "athlete": athlete,
+            },
+        )
+        return athlete
 
     # ------------------------------------------------------------------
     # Activities (summary list)
@@ -199,6 +267,16 @@ class StravaExtractor:
             if not batch:
                 break
 
+            self._write_cache_json(
+                Path("activities") / f"page-{page:04d}.json",
+                {
+                    "fetched_at": datetime.now(timezone.utc).isoformat(),
+                    "page": page,
+                    "params": params,
+                    "raw_activities": batch,
+                },
+            )
+
             for data in batch:
                 all_activities.append(_parse_activity(data))
 
@@ -216,7 +294,16 @@ class StravaExtractor:
     def fetch_activity_detail(self, activity_id: int) -> dict[str, Any]:
         """Fetch the full detail for a single activity (includes laps)."""
         url = STRAVA_ACTIVITY_URL.format(activity_id=activity_id)
-        return self._get(url)
+        detail = self._get(url)
+        self._write_cache_json(
+            Path("activity_details") / f"{int(activity_id)}.json",
+            {
+                "fetched_at": datetime.now(timezone.utc).isoformat(),
+                "activity_id": int(activity_id),
+                **detail,
+            },
+        )
+        return detail
 
     def fetch_laps(self, activity_id: int) -> list[dict[str, Any]]:
         """Fetch parsed lap records for a single activity."""
