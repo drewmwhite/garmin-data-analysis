@@ -1,32 +1,5 @@
 const API_BASE_URL = "http://127.0.0.1:8200/api/v1";
 
-const datasetGrid = document.querySelector("#dataset-grid");
-const apiStatus = document.querySelector("#api-status");
-
-function setStatus(text, state) {
-  apiStatus.textContent = text;
-  apiStatus.dataset.state = state;
-}
-
-function renderDatasetCard(dataset) {
-  const pills = [
-    `${dataset.record_count} records`,
-    `${dataset.column_count} columns`,
-    ...dataset.sample_columns.slice(0, 2),
-  ]
-    .map((t) => `<span class="pill">${t}</span>`)
-    .join("");
-
-  const article = document.createElement("article");
-  article.className = "dataset-card";
-  article.innerHTML = `
-    <h3>${dataset.title}</h3>
-    <p>${dataset.description}</p>
-    <div class="dataset-meta">${pills}</div>
-  `;
-  datasetGrid.appendChild(article);
-}
-
 async function fetchJson(path, options = {}) {
   const res = await fetch(`${API_BASE_URL}${path}`, options);
   if (!res.ok) {
@@ -41,25 +14,6 @@ async function fetchJson(path, options = {}) {
   }
   return res.json();
 }
-
-async function load() {
-  try {
-    setStatus("Connecting…", "");
-    const { datasets } = await fetchJson("/datasets");
-    datasets.forEach(renderDatasetCard);
-    setStatus("Connected", "success");
-  } catch (err) {
-    datasetGrid.innerHTML = `
-      <div class="error-card">
-        <h3>API unavailable</h3>
-        <p>Start the server with <code>uvicorn api:app --reload --port 8200</code> and refresh.</p>
-      </div>
-    `;
-    setStatus("Disconnected", "error");
-  }
-}
-
-load();
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
 
@@ -1047,10 +1001,19 @@ const stravaBackMonths     = document.querySelector("#strava-back-months");
 const stravaBackActivities = document.querySelector("#strava-back-activities");
 
 const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const STRAVA_MONTHS_PER_PAGE = 6;
+const STRAVA_ACTIVITIES_PER_PAGE = 8;
+const STRAVA_LAPS_PER_PAGE = 10;
 
 // Strava nav state so the back buttons know where to return
 let stravaCurrentYear  = null;
 let stravaCurrentMonth = null;
+let stravaMonthsData = [];
+let stravaMonthsPage = 0;
+let stravaActivitiesData = [];
+let stravaActivitiesPage = 0;
+let stravaLapsData = [];
+let stravaLapsPage = 0;
 
 function fmtPace(avgSpeedMs) {
   if (!avgSpeedMs || avgSpeedMs === 0) return "—";
@@ -1068,6 +1031,33 @@ function showStravaView(view) {
   view.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+function paginateItems(items, page, pageSize) {
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const safePage = Math.min(Math.max(page, 0), totalPages - 1);
+  const start = safePage * pageSize;
+  return {
+    items: items.slice(start, start + pageSize),
+    page: safePage,
+    totalPages,
+  };
+}
+
+function renderStravaPagination(page, totalPages, onPrev, onNext) {
+  if (totalPages <= 1) return "";
+  return `
+    <div class="pagination strava-pagination">
+      <button type="button" class="btn btn-secondary" data-strava-page="prev" ${page === 0 ? "disabled" : ""}>&#8592; Prev</button>
+      <span>Page ${page + 1} of ${totalPages}</span>
+      <button type="button" class="btn btn-secondary" data-strava-page="next" ${page >= totalPages - 1 ? "disabled" : ""}>Next &#8594;</button>
+    </div>
+  `;
+}
+
+function bindStravaPagination(container, onPrev, onNext) {
+  container.querySelector('[data-strava-page="prev"]')?.addEventListener("click", onPrev);
+  container.querySelector('[data-strava-page="next"]')?.addEventListener("click", onNext);
+}
+
 // ── View 1: month index ──────────────────────────────────────────────────────
 
 async function loadStravaMonths() {
@@ -1079,25 +1069,64 @@ async function loadStravaMonths() {
       return;
     }
 
-    stravaMonthGrid.innerHTML = "";
-    months.forEach((m) => {
+    stravaMonthsData = months;
+    stravaMonthsPage = 0;
+    renderStravaMonthsPage();
+  } catch {
+    stravaMonthGrid.innerHTML = `<p class="load-prompt error-text">Could not load Strava months. Is the API running?</p>`;
+  }
+}
+
+function renderStravaMonthsPage() {
+  const { items, page, totalPages } = paginateItems(stravaMonthsData, stravaMonthsPage, STRAVA_MONTHS_PER_PAGE);
+  stravaMonthsPage = page;
+
+  const cards = items.map((m) => {
       const label = `${MONTH_NAMES[m.month - 1]} ${m.year}`;
-      const card = document.createElement("article");
-      card.className = "strava-month-card";
-      card.innerHTML = `
+      return `
+      <article class="strava-month-card" data-year="${m.year}" data-month="${m.month}" data-label="${label}">
         <span class="strava-month-label">${label}</span>
         <span class="strava-month-count">${m.activity_count} ${m.activity_count === 1 ? "activity" : "activities"}</span>
         <div class="strava-month-stats">
           <span>${m.total_distance_mi != null ? m.total_distance_mi + " mi" : "—"}</span>
           <span>${fmtDuration(m.total_moving_time_s)}</span>
         </div>
-      `;
-      card.addEventListener("click", () => loadStravaActivitiesForMonth(m.year, m.month, label));
-      stravaMonthGrid.appendChild(card);
-    });
-  } catch {
-    stravaMonthGrid.innerHTML = `<p class="load-prompt error-text">Could not load Strava months. Is the API running?</p>`;
-  }
+      </article>`;
+    }).join("");
+
+  stravaMonthGrid.innerHTML = `
+    <div class="strava-list-shell">
+      <div class="strava-month-grid">${cards}</div>
+      ${renderStravaPagination(
+        stravaMonthsPage,
+        totalPages,
+        () => {
+          stravaMonthsPage -= 1;
+          renderStravaMonthsPage();
+        },
+        () => {
+          stravaMonthsPage += 1;
+          renderStravaMonthsPage();
+        }
+      )}
+    </div>`;
+
+  stravaMonthGrid.querySelectorAll(".strava-month-card").forEach((card) => {
+    card.addEventListener("click", () =>
+      loadStravaActivitiesForMonth(Number(card.dataset.year), Number(card.dataset.month), card.dataset.label)
+    );
+  });
+  bindStravaPagination(
+    stravaMonthGrid,
+    () => {
+      stravaMonthsPage -= 1;
+      renderStravaMonthsPage();
+    },
+    () => {
+      stravaMonthsPage += 1;
+      renderStravaMonthsPage();
+    }
+  );
 }
 
 // ── View 2: activities for a month ───────────────────────────────────────────
@@ -1117,7 +1146,19 @@ async function loadStravaActivitiesForMonth(year, month, label) {
       return;
     }
 
-    const rows = activities.map((a) => {
+    stravaActivitiesData = activities;
+    stravaActivitiesPage = 0;
+    renderStravaActivitiesPage();
+  } catch {
+    stravaActivityList.innerHTML = `<p class="load-prompt error-text">Failed to load activities.</p>`;
+  }
+}
+
+function renderStravaActivitiesPage() {
+  const { items, page, totalPages } = paginateItems(stravaActivitiesData, stravaActivitiesPage, STRAVA_ACTIVITIES_PER_PAGE);
+  stravaActivitiesPage = page;
+
+  const rows = items.map((a) => {
       const isRun = (a.type || "").toLowerCase() === "run";
       const pace  = isRun ? fmtPace(a.average_speed) : fmtSpeed(a.average_speed);
       const date  = a.start_date_local
@@ -1136,8 +1177,9 @@ async function loadStravaActivitiesForMonth(year, month, label) {
         </tr>`;
     }).join("");
 
-    stravaActivityList.innerHTML = `
-      <div class="preview-table-wrap">
+  stravaActivityList.innerHTML = `
+      <div class="strava-list-shell">
+        <div class="preview-table-wrap strava-table-wrap">
         <table class="preview-table strava-activities-table">
           <thead>
             <tr>
@@ -1146,17 +1188,38 @@ async function loadStravaActivitiesForMonth(year, month, label) {
             </tr>
           </thead>
           <tbody>${rows}</tbody>
-        </table>
+          </table>
+        </div>
+        ${renderStravaPagination(
+          stravaActivitiesPage,
+          totalPages,
+          () => {
+            stravaActivitiesPage -= 1;
+            renderStravaActivitiesPage();
+          },
+          () => {
+            stravaActivitiesPage += 1;
+            renderStravaActivitiesPage();
+          }
+        )}
       </div>`;
 
-    stravaActivityList.querySelectorAll(".strava-activity-row").forEach((row) => {
-      row.addEventListener("click", () =>
-        loadStravaLaps(parseInt(row.dataset.id), row.dataset.name, activities.find((a) => a.id == row.dataset.id))
-      );
-    });
-  } catch {
-    stravaActivityList.innerHTML = `<p class="load-prompt error-text">Failed to load activities.</p>`;
-  }
+  stravaActivityList.querySelectorAll(".strava-activity-row").forEach((row) => {
+    row.addEventListener("click", () =>
+      loadStravaLaps(parseInt(row.dataset.id, 10), row.dataset.name, stravaActivitiesData.find((a) => a.id == row.dataset.id))
+    );
+  });
+  bindStravaPagination(
+    stravaActivityList,
+    () => {
+      stravaActivitiesPage -= 1;
+      renderStravaActivitiesPage();
+    },
+    () => {
+      stravaActivitiesPage += 1;
+      renderStravaActivitiesPage();
+    }
+  );
 }
 
 // ── View 3: laps for an activity ─────────────────────────────────────────────
@@ -1192,7 +1255,19 @@ async function loadStravaLaps(activityId, activityName, activity) {
       return;
     }
 
-    const rows = laps.map((lap) => {
+    stravaLapsData = laps;
+    stravaLapsPage = 0;
+    renderStravaLapsPage(activity);
+  } catch {
+    stravaLapsWrap.innerHTML = `<p class="load-prompt error-text">Failed to load splits.</p>`;
+  }
+}
+
+function renderStravaLapsPage(activity) {
+  const { items, page, totalPages } = paginateItems(stravaLapsData, stravaLapsPage, STRAVA_LAPS_PER_PAGE);
+  stravaLapsPage = page;
+
+  const rows = items.map((lap) => {
       const isRun = activity && (activity.type || "").toLowerCase() === "run";
       const pace  = isRun ? fmtPace(lap.average_speed) : fmtSpeed(lap.average_speed);
       return `
@@ -1207,8 +1282,9 @@ async function loadStravaLaps(activityId, activityName, activity) {
         </tr>`;
     }).join("");
 
-    stravaLapsWrap.innerHTML = `
-      <div class="preview-table-wrap">
+  stravaLapsWrap.innerHTML = `
+      <div class="strava-list-shell">
+        <div class="preview-table-wrap strava-table-wrap">
         <table class="preview-table strava-laps-table">
           <thead>
             <tr>
@@ -1217,11 +1293,33 @@ async function loadStravaLaps(activityId, activityName, activity) {
             </tr>
           </thead>
           <tbody>${rows}</tbody>
-        </table>
+          </table>
+        </div>
+        ${renderStravaPagination(
+          stravaLapsPage,
+          totalPages,
+          () => {
+            stravaLapsPage -= 1;
+            renderStravaLapsPage(activity);
+          },
+          () => {
+            stravaLapsPage += 1;
+            renderStravaLapsPage(activity);
+          }
+        )}
       </div>`;
-  } catch {
-    stravaLapsWrap.innerHTML = `<p class="load-prompt error-text">Failed to load splits.</p>`;
-  }
+
+  bindStravaPagination(
+    stravaLapsWrap,
+    () => {
+      stravaLapsPage -= 1;
+      renderStravaLapsPage(activity);
+    },
+    () => {
+      stravaLapsPage += 1;
+      renderStravaLapsPage(activity);
+    }
+  );
 }
 
 // ── Activity Calendar ─────────────────────────────────────────────────────────

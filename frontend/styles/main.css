@@ -75,39 +75,6 @@ body {
   color: var(--text);
 }
 
-/* ── Hero ── */
-
-.hero {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 5rem 1.5rem 4rem;
-}
-
-.hero-label {
-  display: inline-block;
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--accent);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  margin-bottom: 1rem;
-}
-
-.hero h1 {
-  font-size: clamp(2.2rem, 5vw, 3.5rem);
-  font-weight: 700;
-  line-height: 1.15;
-  letter-spacing: -0.02em;
-  margin-bottom: 1.25rem;
-}
-
-.hero-sub {
-  max-width: 48ch;
-  color: var(--muted);
-  font-size: 1.05rem;
-  margin-bottom: 2rem;
-}
-
 /* ── Buttons ── */
 
 .btn {
@@ -191,41 +158,6 @@ body {
   background: #fef2f2;
   border-color: #fecaca;
   color: var(--error);
-}
-
-/* ── Dataset grid ── */
-
-.dataset-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 1rem;
-}
-
-.dataset-card {
-  padding: 1.25rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-subtle);
-  box-shadow: var(--shadow);
-}
-
-.dataset-card h3 {
-  font-size: 0.95rem;
-  font-weight: 600;
-  margin-bottom: 0.4rem;
-}
-
-.dataset-card p {
-  font-size: 0.85rem;
-  color: var(--muted);
-  margin-bottom: 1rem;
-  line-height: 1.5;
-}
-
-.dataset-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
 }
 
 .pill {
@@ -821,13 +753,19 @@ body {
 
 /* ── Strava ── */
 
+.strava-view {
+  display: block;
+}
+
 .strava-month-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.875rem;
+  align-items: stretch;
 }
 
 .strava-month-card {
+  flex: 1 1 220px;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -880,6 +818,19 @@ body {
 
 .strava-activity-row:hover td {
   background: var(--bg-subtle);
+}
+
+.strava-list-shell {
+  display: grid;
+  gap: 1rem;
+}
+
+.strava-table-wrap {
+  overflow: auto;
+}
+
+.strava-pagination {
+  margin-top: 1rem;
 }
 
 /* ── Activity Calendar ── */
@@ -1102,14 +1053,6 @@ body {
 /* ── Responsive ── */
 
 @media (max-width: 768px) {
-  .dataset-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .hero {
-    padding: 3rem 1.25rem 2.5rem;
-  }
-
   .section {
     padding: 2rem 1.25rem;
   }
