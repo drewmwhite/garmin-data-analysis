@@ -1,111 +1,252 @@
 # Garmin Data Extraction
 
-A personal data pipeline for exploring Garmin fitness and wellness data. Extracts records from local Garmin data exports (JSON and `.fit` files), loads them into a local DuckDB database, and serves them through a FastAPI REST API consumed by a vanilla JS frontend.
+A local pipeline for importing Garmin exports, loading them into DuckDB, and exploring them through a FastAPI API and a simple frontend.
 
----
+## What This Repo Does
 
-## How it works
+This project reads Garmin wellness JSON exports and Garmin activity `.fit` files from a local `data/` directory, builds a local `garmin.duckdb` database, and serves that data through:
 
-```text
-data/                          Raw Garmin export files (JSON + .fit binaries)
-    ├── sleep/
-    ├── hydration/
-    ├── daily_summary/
-    ├── activity_vo2_max/
-    └── DI_CONNECT/activity-data/   ~18,000 .fit files
+- a FastAPI backend in `backend/src`
+- a static frontend in `frontend/`
 
-         ↓  python db/build.py   (run once, or on data updates)
+The database is built ahead of time, so the API does not need to re-parse large JSON and FIT files on every request.
 
-garmin.duckdb                  Local columnar database — all data pre-loaded,
-                               queries are instant with no file re-parsing
-
-         ↓  uvicorn api:app
-
-FastAPI REST API               Serves filtered, paginated JSON to the frontend
-frontend/                      Vanilla JS dashboard — activity browser, charts
-```
-
----
-
-## Repository layout
+## Repository Layout
 
 ```text
 .
 ├── backend/
 │   ├── scripts/
-│   │   └── upload_to_s3.py     Upload data to S3 as partitioned Parquet
+│   │   └── upload_to_s3.py
 │   ├── src/
-│   │   ├── api/app.py          FastAPI application
-│   │   ├── extraction/         Data extractors (JSON + FIT parsers)
+│   │   ├── api/app.py
+│   │   ├── extraction/
 │   │   └── services/
-│   │       ├── duckdb_service.py   Query layer for garmin.duckdb
-│   │       └── data_service.py    (legacy — superseded by duckdb_service)
-│   ├── tests/
-│   └── requirements.txt
+│   └── tests/
 ├── db/
-│   └── build.py                Builds garmin.duckdb from raw data files
-├── data/                       Raw Garmin export files (not version-controlled)
-├── frontend/                   Static HTML/CSS/JS dashboard
-├── garmin.duckdb               Generated database file (gitignored)
-└── .env                        Local credentials (gitignored, see .env.example)
+│   └── build.py
+├── data/                       Raw Garmin export files (not committed)
+├── frontend/
+├── garmin.duckdb               Generated local DuckDB database (gitignored)
+├── .env.example
+└── Makefile
 ```
 
----
+## End-to-End Setup
 
-## Quickstart
-
-### 1. Install dependencies
+### 1. Clone the repo and create a virtualenv
 
 ```bash
-python -m venv venv
+git clone <your-repo-url>
+cd garmin-data-extraction
+
+python3 -m venv venv
 source venv/bin/activate
+```
+
+### 2. Install dependencies
+
+Use either the Make target or the direct pip command.
+
+```bash
+make install
+```
+
+```bash
 pip install -r backend/requirements.txt
 ```
 
-### 2. Build the database
+### 3. Create your local `.env`
 
-Load all raw data into `garmin.duckdb`. Run this once, and again whenever your raw data files change.
+```bash
+cp .env.example .env
+```
+
+For a local Garmin-only setup, no environment variables are required to build `garmin.duckdb` from local files.
+
+These values are optional unless you use the related features:
+
+- `STRAVA_CLIENT_ID`, `STRAVA_CLIENT_SECRET`, `STRAVA_REFRESH_TOKEN`: only for Strava imports
+- `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`, `S3_BUCKET`, `S3_PREFIX`: only for S3/Parquet upload
+- `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_REASONING_EFFORT`, `OPENAI_TIMEOUT_SECONDS`: only for training-plan generation features
+- `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `DATABASE_URL`: not needed for the local DuckDB workflow
+
+If you are only importing Garmin data locally, you can leave unused values blank or remove them from `.env`.
+
+### 4. Export your Garmin data
+
+This repo expects a full Garmin export, not a few manually downloaded CSVs.
+
+Garmin’s current support guidance is to request your personal data archive from your Garmin account/data-management flow. Garmin then prepares the archive and emails you a download link. Garmin notes that export generation can take about 48 hours, and sometimes longer depending on account size.
+
+Official Garmin support pages:
+
+- https://support.garmin.com/en-US/?faq=W1TvTPW8JZ6LfJSfK512Q8
+- https://support.garmin.com/en-IN/?faq=q22kMdCbU23NUT2Wmspz16
+
+After Garmin emails the archive link:
+
+1. Download the export ZIP.
+2. Extract it locally.
+3. Copy the relevant folders/files into this repo’s `data/` directory using the layout below.
+
+### 5. Place the export into the expected `data/` layout
+
+The extractors look for these exact repo-local locations:
+
+```text
+data/
+├── sleep/
+├── hydration/
+├── activity_vo2_max/
+├── daily_summary/
+└── DI_CONNECT/
+    └── activity-data/
+```
+
+Expected file patterns:
+
+- `data/sleep/*_sleepData.json`
+- `data/hydration/HydrationLogFile_*.json`
+- `data/activity_vo2_max/ActivityVo2Max_*.json`
+- `data/daily_summary/UDSFile_*.json`
+- `data/DI_CONNECT/activity-data/*.fit`
+
+Typical post-unzip mapping looks like this:
+
+| Garmin export content | Copy into this repo |
+| --- | --- |
+| sleep JSON files matching `*_sleepData.json` | `data/sleep/` |
+| hydration JSON files matching `HydrationLogFile_*.json` | `data/hydration/` |
+| VO2 max JSON files matching `ActivityVo2Max_*.json` | `data/activity_vo2_max/` |
+| daily summary JSON files matching `UDSFile_*.json` | `data/daily_summary/` |
+| activity FIT files under `DI_CONNECT/activity-data/` | `data/DI_CONNECT/activity-data/` |
+
+If the `data/` folders do not exist yet, create them before copying files.
+
+### 6. Build the DuckDB database
+
+Use either the Make target or the direct build command.
+
+```bash
+make build
+```
 
 ```bash
 python db/build.py
 ```
 
-To build a single table or test with a subset of FIT files:
+This reads the raw Garmin files, writes tables into a staging database, rebuilds the unified activity view and training-plan tables, and then atomically replaces the live `garmin.duckdb` file. That staging flow matters because the API can keep reading the old database until the new one is fully built.
+
+### 7. Start the API
 
 ```bash
+make api
+```
+
+```bash
+PYTHONPATH=backend/src python -m uvicorn api.app:app --reload --port 8200
+```
+
+The API will be available at `http://localhost:8200`.
+
+### 8. Open the frontend
+
+You can either open `frontend/index.html` directly or serve it locally:
+
+```bash
+make frontend-serve
+```
+
+Then open `http://localhost:8080`.
+
+## Why DuckDB
+
+DuckDB is a good fit here because this project is a local analytics workflow, not a multi-user transactional app.
+
+- It is a single local file, so there is no separate database server to install or keep running.
+- It is columnar, which makes read-heavy analytical queries fast.
+- It works well for wide JSON-derived wellness tables and large activity-record datasets.
+- It is easy to query directly from Python for ad hoc analysis.
+- It keeps the setup simple for anyone cloning the repo.
+
+In this project specifically, DuckDB lets us do one heavier import step up front and then keep API reads fast and predictable.
+
+## How the Database Build Works
+
+`db/build.py` is the entrypoint for database construction.
+
+At a high level it:
+
+1. Loads `.env` from the repo root.
+2. Copies the existing `garmin.duckdb` into `garmin_staging.duckdb` when present.
+3. Rebuilds one table or all tables from local source files.
+4. Rebuilds the unified activity view.
+5. Ensures training-plan tables exist.
+6. Atomically replaces `garmin.duckdb` with the staging file.
+
+Supported local build modes:
+
+```bash
+# Full rebuild
+python db/build.py
+
+# Rebuild one table
 python db/build.py --table sleep
+python db/build.py --table hydration
+python db/build.py --table vo2max
+python db/build.py --table daily-summaries
+python db/build.py --table activity-sessions
+python db/build.py --table activity-records
+python db/build.py --table strava
+python db/build.py --table view
+
+# Quick test run with fewer rows/files
 python db/build.py --table activity-records --limit 100
+python db/build.py --table activity-sessions --limit 25
+
+# Strava imports
+python db/build.py --table strava
+python db/build.py --table strava --strava-recent-days 30
+python db/build.py --table strava --strava-cache-dir logs/strava_api/<run-dir>
+
+# Build and upload Parquet to S3
+python db/build.py --bucket my-bucket --prefix garmin
 ```
 
-Available tables: `sleep`, `hydration`, `vo2max`, `daily-summaries`, `activity-sessions`, `activity-records`
-
-### 3. Start the API
+Makefile equivalents:
 
 ```bash
-PYTHONPATH=backend/src uvicorn api:app --reload --port 8200
+make build
+make build-table TABLE=sleep
+make build-table TABLE=activity-records LIMIT=100
+make build-strava
+make build-strava-30d
+make build-strava-cache CACHE_DIR=logs/strava_api/<run-dir>
+make build-s3 BUCKET=my-bucket PREFIX=garmin
 ```
 
-### 4. Open the frontend
+Notes:
 
-Open `frontend/index.html` in a browser (with the API running on port 8200).
+- `--limit` is useful for quick parsing checks when working with large FIT exports.
+- Partial builds preserve other tables by starting from the existing database copy.
+- S3 upload is optional and only runs when `--bucket` or `S3_BUCKET` is provided.
 
----
-
-## Database tables
+## Database Tables
 
 | Table | Source | Description |
 | --- | --- | --- |
-| `sleep_records` | `data/sleep/*.json` | Nightly sleep with sleep score columns |
-| `hydration_records` | `data/hydration/*.json` | Per-entry hydration logs |
-| `vo2_max_records` | `data/activity_vo2_max/*.json` | VO2 max readings per activity |
-| `daily_summaries` | `data/daily_summary/*.json` | Steps, calories, HR, intensity minutes |
-| `daily_stress_aggregators` | `data/daily_summary/*.json` | Stress levels by type (TOTAL / AWAKE / ASLEEP) |
-| `activity_sessions` | `data/DI_CONNECT/activity-data/*.fit` | One row per activity (sport, distance, HR, pace, GPS) |
-| `activity_records` | `data/DI_CONNECT/activity-data/*.fit` | Time-series ~1 Hz (HR, speed, cadence, altitude, GPS) |
+| `sleep_records` | `data/sleep/*.json` | Nightly sleep records with flattened sleep-score metrics |
+| `hydration_records` | `data/hydration/*.json` | Hydration log entries |
+| `vo2_max_records` | `data/activity_vo2_max/*.json` | VO2 max readings |
+| `daily_summaries` | `data/daily_summary/*.json` | Daily wellness summaries |
+| `daily_stress_aggregators` | `data/daily_summary/*.json` | Daily stress aggregates |
+| `activity_sessions` | `data/DI_CONNECT/activity-data/*.fit` | One row per recorded activity |
+| `activity_records` | `data/DI_CONNECT/activity-data/*.fit` | Time-series activity records |
+| `strava_activities` | Strava API or cached Strava JSON | Optional Strava activity summaries |
+| `strava_laps` | Strava API or cached Strava JSON | Optional Strava lap data |
 
----
-
-## API reference
+## API Reference
 
 Base URL: `http://localhost:8200`
 
@@ -126,7 +267,7 @@ GET /api/v1/datasets/{slug}?limit=50
 → {slug, record_count, column_count, sample_columns, returned_records, records: [...]}
 ```
 
-Available slugs: `sleep`, `hydration`, `vo2max`, `daily-summaries`, `daily-stress`, `activity-sessions`
+Available slugs: `sleep`, `hydration`, `vo2max`, `daily-summaries`, `daily-stress`, `activity-sessions`, `strava-activities`, `strava-laps`
 
 ### Activities
 
@@ -150,94 +291,22 @@ GET /api/v1/activities/{activity_id}/records
 
 `sort_by` options: `start_time`, `total_distance`, `total_calories`, `avg_heart_rate`, `avg_speed`, `total_ascent`
 
----
+## Querying DuckDB Directly
 
-## S3 / Parquet upload (optional)
-
-Upload all data to S3 as Hive-partitioned Parquet for cheap cloud analytics with DuckDB or Athena.
-
-```bash
-# Set credentials in .env or environment
-export S3_BUCKET=my-bucket
-export S3_PREFIX=garmin
-
-python backend/scripts/upload_to_s3.py
-python backend/scripts/upload_to_s3.py --dataset activity-sessions
-python backend/scripts/upload_to_s3.py --dataset activity-records --limit 100
-```
-
-Partition layout on S3:
-
-```text
-garmin/
-  activity_sessions/sport=running/year=2024/part-0.parquet
-  activity_records/year=2024/month=01/part-0.parquet
-  sleep/year=2024/part-0.parquet
-  ...
-```
-
-Query from S3 with DuckDB (no running server needed):
+`garmin.duckdb` is a standard DuckDB database file, so you can query it directly for analysis.
 
 ```python
 import duckdb
-conn = duckdb.connect()
-conn.execute("INSTALL httpfs; LOAD httpfs; SET s3_region='us-east-1'")
 
-conn.execute("""
-    SELECT * FROM read_parquet('s3://my-bucket/garmin/activity_sessions/**/*.parquet',
-                               hive_partitioning = true)
-    WHERE sport = 'running' AND year = 2024
-""").df()
-```
-
----
-
-## Environment variables
-
-Copy `.env.example` to `.env` and fill in values as needed.
-
-| Variable | Used by | Purpose |
-| --- | --- | --- |
-| `AWS_ACCESS_KEY_ID` | `upload_to_s3.py` | AWS credentials for S3 upload |
-| `AWS_SECRET_ACCESS_KEY` | `upload_to_s3.py` | AWS credentials for S3 upload |
-| `AWS_DEFAULT_REGION` | `upload_to_s3.py` | AWS region |
-| `S3_BUCKET` | `upload_to_s3.py` | Destination S3 bucket |
-| `S3_PREFIX` | `upload_to_s3.py` | Key prefix (default: `garmin`) |
-| `SUPABASE_URL` | (unused) | Reserved for future use |
-| `SUPABASE_SERVICE_KEY` | (unused) | Reserved for future use |
-
----
-
-## Querying DuckDB directly
-
-The `garmin.duckdb` file is a standard DuckDB database. Query it directly for ad-hoc analysis:
-
-```python
-import duckdb
 conn = duckdb.connect("garmin.duckdb", read_only=True)
 
-# Sleep trends
 conn.execute("""
-    SELECT calendarDate, score_overall, deepSleepSeconds / 3600.0 AS deep_hours
+    SELECT calendarDate, score_overall
     FROM sleep_records
-    WHERE score_overall IS NOT NULL
     ORDER BY calendarDate DESC
     LIMIT 30
 """).df()
 
-# Running volume by month
-conn.execute("""
-    SELECT
-        DATE_TRUNC('month', start_time) AS month,
-        COUNT(*) AS runs,
-        SUM(total_distance) / 1000 AS total_km
-    FROM activity_sessions
-    WHERE sport = 'running'
-    GROUP BY 1
-    ORDER BY 1 DESC
-""").df()
-
-# HR during a specific activity
 conn.execute("""
     SELECT timestamp, heart_rate, speed, altitude
     FROM activity_records
@@ -248,9 +317,27 @@ conn.execute("""
 conn.close()
 ```
 
----
+## Optional S3 / Parquet Upload
 
-## Running tests
+You can export datasets to S3 as Hive-partitioned Parquet for cloud analytics.
+
+```bash
+make upload-s3 BUCKET=my-bucket PREFIX=garmin
+make upload-s3-dataset BUCKET=my-bucket DATASET=activity-sessions PREFIX=garmin
+```
+
+```bash
+python backend/scripts/upload_to_s3.py --bucket my-bucket --prefix garmin
+python backend/scripts/upload_to_s3.py --bucket my-bucket --prefix garmin --dataset activity-sessions
+```
+
+This requires AWS credentials in `.env` or your shell environment.
+
+## Running Tests
+
+```bash
+make test
+```
 
 ```bash
 python -m unittest discover -s backend/tests -v
